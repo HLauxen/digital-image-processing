@@ -289,4 +289,88 @@ public class ImageController {
 
         return nova;
     }
+
+    private static double[][] gerarKernelGaussiano(int tamanho) {
+        double[][] kernel = new double[tamanho][tamanho];
+
+        int raio = tamanho / 2;
+        double sigma = tamanho / 3.0; // valor comum
+        double soma = 0;
+
+        for (int x = -raio; x <= raio; x++) {
+            for (int y = -raio; y <= raio; y++) {
+
+                double valor = Math.exp(-(x * x + y * y) / (2 * sigma * sigma));
+                kernel[x + raio][y + raio] = valor;
+                soma += valor;
+            }
+        }
+
+        // Normaliza o kernel
+        for (int i = 0; i < tamanho; i++) {
+            for (int j = 0; j < tamanho; j++) {
+                kernel[i][j] /= soma;
+            }
+        }
+
+        return kernel;
+    }
+
+    public static BufferedImage gaussianBlur(int tamanho) {
+        int largura = originalImage.getWidth();
+        int altura = originalImage.getHeight();
+
+        BufferedImage nova = new BufferedImage(
+                largura,
+                altura,
+                originalImage.getType()
+        );
+
+        int raio = tamanho / 2;
+
+        double[][] kernel = gerarKernelGaussiano(tamanho);
+        double somaKernel = 0;
+
+        // Calcula soma do kernel
+        for (int i = 0; i < tamanho; i++) {
+            for (int j = 0; j < tamanho; j++) {
+                somaKernel += kernel[i][j];
+            }
+        }
+
+        for (int x = raio; x < largura - raio; x++) {
+            for (int y = raio; y < altura - raio; y++) {
+
+                double r = 0, g = 0, b = 0;
+
+                for (int i = -raio; i <= raio; i++) {
+                    for (int j = -raio; j <= raio; j++) {
+
+                        int rgb = originalImage.getRGB(x + i, y + j);
+                        Color cor = new Color(rgb);
+
+                        double peso = kernel[i + raio][j + raio];
+
+                        r += cor.getRed() * peso;
+                        g += cor.getGreen() * peso;
+                        b += cor.getBlue() * peso;
+                    }
+                }
+
+                int novoR = (int)(r / somaKernel);
+                int novoG = (int)(g / somaKernel);
+                int novoB = (int)(b / somaKernel);
+
+                Color novaCor = new Color(
+                        Math.min(255, novoR),
+                        Math.min(255, novoG),
+                        Math.min(255, novoB)
+                );
+
+                nova.setRGB(x, y, novaCor.getRGB());
+            }
+        }
+
+        return nova;
+    }
 }

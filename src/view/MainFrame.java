@@ -201,6 +201,26 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private void showGaussianDialog() {
+        JSpinner kernelSpinner = new JSpinner(
+                new SpinnerNumberModel(3, 3, 15, 2) // começa em 3, vai de 3 até 15, passo 2 (ímpares)
+        );
+
+        int result = JOptionPane.showConfirmDialog(
+                MainFrame.this,
+                kernelSpinner,
+                "Filtro Gaussiano (Tamanho do Kernel)",
+                JOptionPane.OK_CANCEL_OPTION
+        );
+
+        if (result == JOptionPane.OK_OPTION) {
+            int tamanhoKernel = (int) kernelSpinner.getValue();
+            transformedPanel.setImage(
+                    ImageController.gaussianBlur(tamanhoKernel)
+            );
+        }
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
@@ -217,6 +237,7 @@ public class MainFrame extends JFrame {
         menuFiltros.add(createMenuItem("Grayscale...", null, e -> showGrayScaleDialog()));
         menuFiltros.add(createMenuItem("Brilho...", null, e -> showShineDialog()));
         menuFiltros.add(createMenuItem("Contraste...", null, e -> showContrastDialog()));
+        menuFiltros.add(createMenuItem("Suavizar...", null, e -> showGaussianDialog()));
 
         JMenu menuMorfologia = new JMenu("Morfologia Matemática");
         menuMorfologia.add(new JMenuItem("Dilatação"));
