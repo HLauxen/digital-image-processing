@@ -221,6 +221,19 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private void showRobertsDialog() {
+            transformedPanel.setImage(
+                    ImageController.roberts()
+            );
+    }
+
+    private void showMarrDialog() {
+        transformedPanel.setImage(
+                ImageController.marrHildreth()
+        );
+    }
+
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
@@ -238,6 +251,8 @@ public class MainFrame extends JFrame {
         menuFiltros.add(createMenuItem("Brilho...", null, e -> showShineDialog()));
         menuFiltros.add(createMenuItem("Contraste...", null, e -> showContrastDialog()));
         menuFiltros.add(createMenuItem("Suavizar...", null, e -> showGaussianDialog()));
+        menuFiltros.add(createMenuItem("Detecta Bordas (Roberts)...", null, e -> showRobertsDialog()));
+        menuFiltros.add(createMenuItem("Detecta Bordas (Marr Hildreth)...", null, e -> showMarrDialog()));
 
         JMenu menuMorfologia = new JMenu("Morfologia Matemática");
         menuMorfologia.add(new JMenuItem("Dilatação"));
