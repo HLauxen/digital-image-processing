@@ -167,43 +167,6 @@ public class ImageController {
         return transformar(m, largura, altura);
     }
 
-//    public static BufferedImage rotacionarCentro(BufferedImage img, double graus) {
-//        int largura = img.getWidth();
-//        int altura = img.getHeight();
-//
-//        double cx = largura / 2.0;
-//        double cy = altura / 2.0;
-//
-//        double rad = Math.toRadians(graus);
-//
-//        BufferedImage nova = new BufferedImage(largura, altura, img.getType());
-//
-//        for (int x = 0; x < largura; x++) {
-//            for (int y = 0; y < altura; y++) {
-//
-//                int rgb = img.getRGB(x, y);
-//
-//                // Translada para origem
-//                double xt = x - cx;
-//                double yt = y - cy;
-//
-//                // Rotaciona
-//                double xr = xt * Math.cos(rad) - yt * Math.sin(rad);
-//                double yr = xt * Math.sin(rad) + yt * Math.cos(rad);
-//
-//                // Volta para posição original
-//                int xd = (int) Math.round(xr + cx);
-//                int yd = (int) Math.round(yr + cy);
-//
-//                if (xd >= 0 && xd < largura && yd >= 0 && yd < altura) {
-//                    nova.setRGB(xd, yd, rgb);
-//                }
-//            }
-//        }
-//
-//        return nova;
-//    }
-
     private static int limitar(int valor) {
         return Math.max(0, Math.min(255, valor));
     }
@@ -284,6 +247,200 @@ public class ImageController {
                 int b = limitar((int) (contraste * cor.getBlue()));
 
                 nova.setRGB(x, y, new Color(r, g, b).getRGB());
+            }
+        }
+
+        return nova;
+    }
+
+    private static double[][] gerarKernelGaussiano(int tamanho) {
+        double[][] kernel = new double[tamanho][tamanho];
+
+        int raio = tamanho / 2;
+        double sigma = tamanho / 3.0;
+        double soma = 0;
+
+        for (int x = -raio; x <= raio; x++) {
+            for (int y = -raio; y <= raio; y++) {
+
+                double valor = Math.exp(-(x * x + y * y) / (2 * sigma * sigma));
+                kernel[x + raio][y + raio] = valor;
+                soma += valor;
+            }
+        }
+
+        for (int i = 0; i < tamanho; i++) {
+            for (int j = 0; j < tamanho; j++) {
+                kernel[i][j] /= soma;
+            }
+        }
+
+        return kernel;
+    }
+
+    public static BufferedImage gaussianBlur(int tamanho) {
+        int largura = originalImage.getWidth();
+        int altura = originalImage.getHeight();
+
+        BufferedImage nova = new BufferedImage(
+                largura,
+                altura,
+                originalImage.getType()
+        );
+
+        int raio = tamanho / 2;
+
+        double[][] kernel = gerarKernelGaussiano(tamanho);
+        double somaKernel = 0;
+
+        for (int i = 0; i < tamanho; i++) {
+            for (int j = 0; j < tamanho; j++) {
+                somaKernel += kernel[i][j];
+            }
+        }
+
+        for (int x = raio; x < largura - raio; x++) {
+            for (int y = raio; y < altura - raio; y++) {
+
+                double r = 0, g = 0, b = 0;
+
+                for (int i = -raio; i <= raio; i++) {
+                    for (int j = -raio; j <= raio; j++) {
+
+                        int rgb = originalImage.getRGB(x + i, y + j);
+                        Color cor = new Color(rgb);
+
+                        double peso = kernel[i + raio][j + raio];
+
+                        r += cor.getRed() * peso;
+                        g += cor.getGreen() * peso;
+                        b += cor.getBlue() * peso;
+                    }
+                }
+
+                int novoR = (int)(r / somaKernel);
+                int novoG = (int)(g / somaKernel);
+                int novoB = (int)(b / somaKernel);
+
+                Color novaCor = new Color(
+                        Math.min(255, novoR),
+                        Math.min(255, novoG),
+                        Math.min(255, novoB)
+                );
+
+                nova.setRGB(x, y, novaCor.getRGB());
+            }
+        }
+
+        return nova;
+    }
+
+    public static BufferedImage roberts() {
+
+        BufferedImage suavizada = gaussianBlur(3);
+
+        int largura = suavizada.getWidth();
+        int altura = suavizada.getHeight();
+
+        BufferedImage nova = new BufferedImage(
+                largura,
+                altura,
+                BufferedImage.TYPE_INT_RGB
+        );
+
+        int threshold = 30;
+
+        for (int x = 0; x < largura - 1; x++) {
+            for (int y = 0; y < altura - 1; y++) {
+
+                int p1 = new Color(suavizada.getRGB(x, y)).getRed();
+                int p2 = new Color(suavizada.getRGB(x + 1, y)).getRed();
+                int p3 = new Color(suavizada.getRGB(x, y + 1)).getRed();
+                int p4 = new Color(suavizada.getRGB(x + 1, y + 1)).getRed();
+
+                int g1 = p1 - p4;
+                int g2 = p2 - p3;
+
+                int g = (int) Math.sqrt(g1 * g1 + g2 * g2);
+
+                int valor = (g > threshold) ? 255 : 0;
+
+                nova.setRGB(x, y, new Color(valor, valor, valor).getRGB());
+            }
+        }
+
+        return nova;
+    }
+
+    public static BufferedImage marrHildreth() {
+
+        BufferedImage suavizada = gaussianBlur(3);
+
+        int largura = suavizada.getWidth();
+        int altura = suavizada.getHeight();
+
+        BufferedImage nova = new BufferedImage(
+                largura,
+                altura,
+                BufferedImage.TYPE_INT_RGB
+        );
+
+        int threshold = 15;
+
+        // Kernel Laplaciano simples (3x3)
+        int[][] laplaciano = {
+                { 0, -1,  0 },
+                {-1,  4, -1 },
+                { 0, -1,  0 }
+        };
+
+        double[][] lap = new double[largura][altura];
+
+        for (int x = 1; x < largura - 1; x++) {
+            for (int y = 1; y < altura - 1; y++) {
+
+                double soma = 0;
+
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+
+                        int pixel = new Color(
+                                suavizada.getRGB(x + i, y + j)
+                        ).getRed();
+
+                        soma += pixel * laplaciano[i + 1][j + 1];
+                    }
+                }
+
+                lap[x][y] = soma;
+            }
+        }
+
+        for (int x = 1; x < largura - 1; x++) {
+            for (int y = 1; y < altura - 1; y++) {
+
+                boolean isBorda = false;
+                double atual = lap[x][y];
+
+                // verifica vizinhos (mudança de sinal)
+                for (int i = -1; i <= 1 && !isBorda; i++) {
+                    for (int j = -1; j <= 1; j++) {
+
+                        double vizinho = lap[x + i][y + j];
+
+                        if ((atual > 0 && vizinho < 0) ||
+                                (atual < 0 && vizinho > 0)) {
+
+                            if (Math.abs(atual - vizinho) > threshold) {
+                                isBorda = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                int valor = isBorda ? 255 : 0;
+                nova.setRGB(x, y, new Color(valor, valor, valor).getRGB());
             }
         }
 
