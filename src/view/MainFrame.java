@@ -253,6 +253,12 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private void showThinDialog() {
+        transformedPanel.setImage(
+                ImageController.zhangSuen()
+        );
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
@@ -279,7 +285,7 @@ public class MainFrame extends JFrame {
         menuMorfologia.add(createMenuItem("Erosão", null, e -> showErosionDialog()));
         menuMorfologia.add(createMenuItem("Abertura", null, e -> showContrastDialog()));
         menuMorfologia.add(createMenuItem("Fechamento", null, e -> showGaussianDialog()));
-        menuMorfologia.add(createMenuItem("Afinamento", null, e -> showThresholdDialog()));
+        menuMorfologia.add(createMenuItem("Afinamento", null, e -> showThinDialog()));
 
         JMenu menuExtracao = new JMenu("Extração de Características");
         menuExtracao.add(new JMenuItem("Desafio"));

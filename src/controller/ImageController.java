@@ -590,7 +590,36 @@ public class ImageController {
         return nova;
     }
 
+    private static int[][] binarizar(BufferedImage img, int threshold) {
+        int largura = img.getWidth();
+        int altura  = img.getHeight();
+
+        int[][] grid = new int[altura][largura];
+
+        for (int y = 0; y < altura; y++) {
+            for (int x = 0; x < largura; x++) {
+
+                int rgb = img.getRGB(x, y);
+
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >>  8) & 0xFF;
+                int b =  rgb        & 0xFF;
+
+                int cinza = (int) (0.299 * r + 0.587 * g + 0.114 * b);
+
+                grid[y][x] = (cinza >= threshold) ? 255 : 0;
+            }
+        }
+
+        return grid;
+    }
+
     public static int[][] criarElemento(TipoElemento tipo, int tamanho) {
+
+        if (tamanho % 2 == 0) {
+            tamanho++;
+        }
+
         int[][] elemento = new int[tamanho][tamanho];
         int centro = tamanho / 2;
 
@@ -602,123 +631,101 @@ public class ImageController {
                 } else if (tipo == TipoElemento.CRUZ) {
                     elemento[i][j] = (i == centro || j == centro) ? 1 : 0;
                 }
-
             }
         }
+
         return elemento;
     }
-
 
     public static BufferedImage processarErosaoDilatacao(
             Operacao operacao,
             TipoElemento tipoElemento,
             int tamanhoElemento
     ) {
-
         final int largura = originalImage.getWidth();
-        final int altura = originalImage.getHeight();
+        final int altura  = originalImage.getHeight();
 
-        final int[][] elementoEstruturante =
-                criarElemento(tipoElemento, tamanhoElemento);
+        final int[][] elementoEstruturante = criarElemento(tipoElemento, tamanhoElemento);
 
-        final int offset = tamanhoElemento / 2;
+        final int tamanhoReal = elementoEstruturante.length;
+        final int offset      = tamanhoReal / 2;
 
-        final int[][] imagemBinaria = new int[altura][largura];
+        final int[][] imagemBinaria = binarizar(originalImage, 127);
+        final int[][] resultado     = new int[altura][largura];
 
-        final int threshold = 127;
+        if (operacao == Operacao.DILATACAO) {
+            dilatacao(imagemBinaria, resultado, elementoEstruturante, tamanhoReal, offset, largura, altura);
+        } else {
+            erosao(imagemBinaria, resultado, elementoEstruturante, tamanhoReal, offset, largura, altura);
+        }
 
+        return getBufferedImage(largura, altura, resultado);
+    }
+
+    private static void dilatacao(
+            int[][] src, int[][] dst,
+            int[][] elem, int tamanho, int offset,
+            int largura, int altura
+    ) {
         for (int y = 0; y < altura; y++) {
             for (int x = 0; x < largura; x++) {
 
-                int rgb = originalImage.getRGB(x, y);
+                boolean encontrouObjeto = false;
 
-                int r = (rgb >> 16) & 0xFF;
-                int g = (rgb >> 8) & 0xFF;
-                int b = rgb & 0xFF;
+                externo:
+                for (int i = 0; i < tamanho; i++) {
+                    for (int j = 0; j < tamanho; j++) {
 
-                int cinza = (int) (
-                        0.299 * r +
-                                0.587 * g +
-                                0.114 * b
-                );
+                        if (elem[i][j] == 0) continue;
 
-                imagemBinaria[y][x] =
-                        (cinza >= threshold) ? 255 : 0;
+                        int nx = x + j - offset;
+                        int ny = y + i - offset;
+
+                        if (nx < 0 || nx >= largura || ny < 0 || ny >= altura) continue;
+
+                        if (src[ny][nx] == 255) {
+                            encontrouObjeto = true;
+                            break externo;
+                        }
+                    }
+                }
+
+                dst[y][x] = encontrouObjeto ? 255 : 0;
             }
         }
+    }
 
-        final int[][] resultado = new int[altura][largura];
-
+    private static void erosao(
+            int[][] src, int[][] dst,
+            int[][] elem, int tamanho, int offset,
+            int largura, int altura
+    ) {
         for (int y = 0; y < altura; y++) {
             for (int x = 0; x < largura; x++) {
 
-                if (operacao == Operacao.DILATACAO) {
+                boolean todosObjeto = true;
 
-                    boolean encontrouBranco = false;
+                externo:
+                for (int i = 0; i < tamanho; i++) {
+                    for (int j = 0; j < tamanho; j++) {
 
-                    for (int i = 0; i < tamanhoElemento && !encontrouBranco; i++) {
-                        for (int j = 0; j < tamanhoElemento; j++) {
+                        if (elem[i][j] == 0) continue;
 
-                            if (elementoEstruturante[i][j] == 0) {
-                                continue;
-                            }
+                        int nx = x + j - offset;
+                        int ny = y + i - offset;
 
-                            int nx = x + j - offset;
-                            int ny = y + i - offset;
+                        if (nx < 0 || nx >= largura || ny < 0 || ny >= altura) continue;
 
-                            if (nx < 0 || nx >= largura ||
-                                    ny < 0 || ny >= altura) {
-                                continue;
-                            }
-
-                            if (imagemBinaria[ny][nx] == 255) {
-                                encontrouBranco = true;
-                                break;
-                            }
+                        if (src[ny][nx] == 0) {
+                            todosObjeto = false;
+                            break externo;
                         }
                     }
-
-                    resultado[y][x] =
-                            encontrouBranco ? 255 : 0;
                 }
 
-                else {
-
-                    boolean encontrouPreto = false;
-
-                    for (int i = 0; i < tamanhoElemento && !encontrouPreto; i++) {
-                        for (int j = 0; j < tamanhoElemento; j++) {
-
-                            if (elementoEstruturante[i][j] == 0) {
-                                continue;
-                            }
-
-                            int nx = x + j - offset;
-                            int ny = y + i - offset;
-
-                            if (nx < 0 || nx >= largura ||
-                                    ny < 0 || ny >= altura) {
-
-                                encontrouPreto = true;
-                                break;
-                            }
-
-                            if (imagemBinaria[ny][nx] == 0) {
-                                encontrouPreto = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    resultado[y][x] =
-                            encontrouPreto ? 0 : 255;
-                }
+                dst[y][x] = todosObjeto ? 255 : 0;
             }
         }
-
-        BufferedImage imagemFinal = getBufferedImage(largura, altura, resultado);
-
-        return imagemFinal;
     }
 
     private static BufferedImage getBufferedImage(int largura, int altura, int[][] resultado) {
@@ -744,8 +751,130 @@ public class ImageController {
         return imagemFinal;
     }
 
-    // Setter para definir a imagem original
-    public static void setOriginalImage(BufferedImage img) {
-        originalImage = img;
+    public static BufferedImage zhangSuen() {
+
+        final int largura = originalImage.getWidth();
+        final int altura  = originalImage.getHeight();
+        final int threshold = 127;
+
+        final int[][] grid = new int[altura][largura];
+
+        for (int y = 0; y < altura; y++) {
+            for (int x = 0; x < largura; x++) {
+
+                int rgb = originalImage.getRGB(x, y);
+
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >>  8) & 0xFF;
+                int b =  rgb        & 0xFF;
+
+                int cinza = (int) (0.299 * r + 0.587 * g + 0.114 * b);
+
+                grid[y][x] = (cinza >= threshold) ? 1 : 0;
+            }
+        }
+
+        boolean houveMudanca;
+
+        do {
+            houveMudanca = false;
+
+            boolean[][] remover = new boolean[altura][largura];
+
+            for (int y = 1; y < altura - 1; y++) {
+                for (int x = 1; x < largura - 1; x++) {
+
+                    if (grid[y][x] == 1 && satisfazPasso1ZhangSuen(grid, x, y)) {
+                        remover[y][x] = true;
+                        houveMudanca  = true;
+                    }
+                }
+            }
+
+            aplicarRemocaoZhangSuen(grid, remover, altura, largura);
+
+            remover = new boolean[altura][largura];
+
+            for (int y = 1; y < altura - 1; y++) {
+                for (int x = 1; x < largura - 1; x++) {
+
+                    if (grid[y][x] == 1 && satisfazPasso2ZhangSuen(grid, x, y)) {
+                        remover[y][x] = true;
+                        houveMudanca  = true;
+                    }
+                }
+            }
+
+            aplicarRemocaoZhangSuen(grid, remover, altura, largura);
+
+        } while (houveMudanca);
+
+        final int[][] resultado = new int[altura][largura];
+
+        for (int y = 0; y < altura; y++) {
+            for (int x = 0; x < largura; x++) {
+                resultado[y][x] = (grid[y][x] == 1) ? 255 : 0;
+            }
+        }
+
+        return getBufferedImage(largura, altura, resultado);
+    }
+
+    private static int[] vizinhosZhangSuen(int[][] g, int x, int y) {
+        return new int[]{
+                g[y-1][x  ],  // p2 - norte
+                g[y-1][x+1],  // p3 - nordeste
+                g[y  ][x+1],  // p4 - leste
+                g[y+1][x+1],  // p5 - sudeste
+                g[y+1][x  ],  // p6 - sul
+                g[y+1][x-1],  // p7 - sudoeste
+                g[y  ][x-1],  // p8 - oeste
+                g[y-1][x-1]   // p9 - noroeste
+        };
+    }
+
+    private static int bZhangSuen(int[] vizinhos) {
+        int count = 0;
+        for (int v : vizinhos) count += v;
+        return count;
+    }
+
+    private static int aZhangSuen(int[] vizinhos) {
+        int transicoes = 0;
+        for (int i = 0; i < vizinhos.length; i++) {
+            int atual    = vizinhos[i];
+            int proximo  = vizinhos[(i + 1) % vizinhos.length];
+            if (atual == 0 && proximo == 1) transicoes++;
+        }
+        return transicoes;
+    }
+
+    private static boolean satisfazPasso1ZhangSuen(int[][] g, int x, int y) {
+        int[] v = vizinhosZhangSuen(g, x, y);
+        int b = bZhangSuen(v);
+
+        if (b < 2 || b > 6)  return false;
+        if (aZhangSuen(v) != 1) return false;
+        if (v[0] * v[2] * v[4] != 0) return false; // condição c: p2*p4*p6
+        if (v[2] * v[4] * v[6] != 0) return false; // condição d: p4*p6*p8
+        return true;
+    }
+
+    private static boolean satisfazPasso2ZhangSuen(int[][] g, int x, int y) {
+        int[] v = vizinhosZhangSuen(g, x, y);
+        int b = bZhangSuen(v);
+
+        if (b < 2 || b > 6)  return false;
+        if (aZhangSuen(v) != 1) return false;
+        if (v[0] * v[2] * v[6] != 0) return false; // condição c: p2*p4*p8
+        if (v[0] * v[4] * v[6] != 0) return false; // condição d: p2*p6*p8
+        return true;
+    }
+
+    private static void aplicarRemocaoZhangSuen(int[][] grid, boolean[][] remover,
+                                                int altura, int largura) {
+        for (int y = 0; y < altura; y++)
+            for (int x = 0; x < largura; x++)
+                if (remover[y][x]) grid[y][x] = 0;
     }
 }
