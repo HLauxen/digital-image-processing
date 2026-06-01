@@ -1,6 +1,8 @@
 package view;
 
 import controller.ImageController;
+import controller.ImageController.Operacao;
+import controller.ImageController.TipoElemento;
 
 import javax.swing.*;
 import java.awt.*;
@@ -221,10 +223,16 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private void showThresholdDialog() {
+        transformedPanel.setImage(
+                ImageController.otsu()
+        );
+    }
+
     private void showRobertsDialog() {
-            transformedPanel.setImage(
-                    ImageController.roberts()
-            );
+        transformedPanel.setImage(
+                ImageController.roberts()
+        );
     }
 
     private void showMarrDialog() {
@@ -233,6 +241,17 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private void showDilationDialog() {
+        transformedPanel.setImage(
+                ImageController.processarErosaoDilatacao(Operacao.DILATACAO, TipoElemento.CRUZ, 3)
+        );
+    }
+
+    private void showErosionDialog() {
+        transformedPanel.setImage(
+                ImageController.processarErosaoDilatacao(Operacao.EROSAO, TipoElemento.CRUZ, 3)
+        );
+    }
 
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
@@ -250,16 +269,17 @@ public class MainFrame extends JFrame {
         menuFiltros.add(createMenuItem("Grayscale...", null, e -> showGrayScaleDialog()));
         menuFiltros.add(createMenuItem("Brilho...", null, e -> showShineDialog()));
         menuFiltros.add(createMenuItem("Contraste...", null, e -> showContrastDialog()));
-        menuFiltros.add(createMenuItem("Suavizar...", null, e -> showGaussianDialog()));
+        menuFiltros.add(createMenuItem("Suavizar (Gauss)...", null, e -> showGaussianDialog()));
+        menuFiltros.add(createMenuItem("Threshold...", null, e -> showThresholdDialog()));
         menuFiltros.add(createMenuItem("Detecta Bordas (Roberts)...", null, e -> showRobertsDialog()));
         menuFiltros.add(createMenuItem("Detecta Bordas (Marr Hildreth)...", null, e -> showMarrDialog()));
 
         JMenu menuMorfologia = new JMenu("Morfologia Matemática");
-        menuMorfologia.add(new JMenuItem("Dilatação"));
-        menuMorfologia.add(new JMenuItem("Erosão"));
-        menuMorfologia.add(new JMenuItem("Abertura"));
-        menuMorfologia.add(new JMenuItem("Fechamento"));
-        menuMorfologia.add(new JMenuItem("Afinamento"));
+        menuMorfologia.add(createMenuItem("Dilatação", null, e -> showDilationDialog()));
+        menuMorfologia.add(createMenuItem("Erosão", null, e -> showErosionDialog()));
+        menuMorfologia.add(createMenuItem("Abertura", null, e -> showContrastDialog()));
+        menuMorfologia.add(createMenuItem("Fechamento", null, e -> showGaussianDialog()));
+        menuMorfologia.add(createMenuItem("Afinamento", null, e -> showThresholdDialog()));
 
         JMenu menuExtracao = new JMenu("Extração de Características");
         menuExtracao.add(new JMenuItem("Desafio"));

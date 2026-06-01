@@ -15,6 +15,16 @@ public class ImageController {
     private static BufferedImage originalImage;
     private BufferedImage transformedImage;
 
+    public enum Operacao {
+        DILATACAO,
+        EROSAO
+    }
+
+    public enum TipoElemento {
+        CRUZ,
+        QUADRADO
+    }
+
     public ImageController(MainFrame frame) {
         this.frame = frame;
     }
@@ -337,7 +347,7 @@ public class ImageController {
 
     public static BufferedImage roberts() {
 
-        BufferedImage suavizada = gaussianBlur(3);
+        BufferedImage suavizada = mediana();
 
         int largura = suavizada.getWidth();
         int altura = suavizada.getHeight();
@@ -374,7 +384,7 @@ public class ImageController {
 
     public static BufferedImage marrHildreth() {
 
-        BufferedImage suavizada = gaussianBlur(3);
+        BufferedImage suavizada = mediana();
 
         int largura = suavizada.getWidth();
         int altura = suavizada.getHeight();
@@ -445,5 +455,297 @@ public class ImageController {
         }
 
         return nova;
+    }
+
+    public static BufferedImage otsu() {
+
+        BufferedImage suavizada = gaussianBlur(3);
+
+        int largura = suavizada.getWidth();
+        int altura = suavizada.getHeight();
+
+        BufferedImage nova = new BufferedImage(
+                largura,
+                altura,
+                BufferedImage.TYPE_INT_RGB
+        );
+
+        int[] histograma = new int[256];
+
+        for (int x = 0; x < largura; x++) {
+            for (int y = 0; y < altura; y++) {
+                int pixel = new Color(suavizada.getRGB(x, y)).getRed();
+                histograma[pixel]++;
+            }
+        }
+
+        int total = largura * altura;
+
+        // 2. Soma total dos níveis de cinza
+        float soma = 0;
+        for (int i = 0; i < 256; i++) {
+            soma += i * histograma[i];
+        }
+
+        float somaB = 0;
+        int pesoFundo = 0;
+        int pesoFrente;
+
+        float varianciaMax = 0;
+        int threshold = 0;
+
+        // 3. Encontrar threshold ótimo
+        for (int t = 0; t < 256; t++) {
+            pesoFundo += histograma[t];
+            if (pesoFundo == 0) continue;
+
+            pesoFrente = total - pesoFundo;
+            if (pesoFrente == 0) break;
+
+            somaB += (float) (t * histograma[t]);
+
+            float mediaFundo = somaB / pesoFundo;
+            float mediaFrente = (soma - somaB) / pesoFrente;
+
+            float varianciaEntre = (float) pesoFundo * pesoFrente *
+                    (mediaFundo - mediaFrente) * (mediaFundo - mediaFrente);
+
+            if (varianciaEntre > varianciaMax) {
+                varianciaMax = varianciaEntre;
+                threshold = t;
+            }
+        }
+
+        for (int x = 0; x < largura; x++) {
+            for (int y = 0; y < altura; y++) {
+
+                int pixel = new Color(suavizada.getRGB(x, y)).getRed();
+
+                int valor = (pixel > threshold) ? 255 : 0;
+
+                nova.setRGB(x, y, new Color(valor, valor, valor).getRGB());
+            }
+        }
+
+        return nova;
+    }
+
+    public static BufferedImage mediana() {
+
+        int tamanho = 3;
+        int largura = originalImage.getWidth();
+        int altura = originalImage.getHeight();
+
+        BufferedImage nova = new BufferedImage(
+                largura,
+                altura,
+                originalImage.getType()
+        );
+
+        int raio = tamanho / 2;
+
+        for (int x = raio; x < largura - raio; x++) {
+            for (int y = raio; y < altura - raio; y++) {
+
+                int[] r = new int[tamanho * tamanho];
+                int[] g = new int[tamanho * tamanho];
+                int[] b = new int[tamanho * tamanho];
+
+                int k = 0;
+
+                // percorre vizinhança (kernel)
+                for (int i = -raio; i <= raio; i++) {
+                    for (int j = -raio; j <= raio; j++) {
+
+                        Color cor = new Color(
+                                originalImage.getRGB(x + i, y + j)
+                        );
+
+                        r[k] = cor.getRed();
+                        g[k] = cor.getGreen();
+                        b[k] = cor.getBlue();
+
+                        k++;
+                    }
+                }
+
+                // ordena os valores
+                java.util.Arrays.sort(r);
+                java.util.Arrays.sort(g);
+                java.util.Arrays.sort(b);
+
+                // pega a mediana
+                int meio = r.length / 2;
+
+                Color novaCor = new Color(
+                        r[meio],
+                        g[meio],
+                        b[meio]
+                );
+
+                nova.setRGB(x, y, novaCor.getRGB());
+            }
+        }
+
+        return nova;
+    }
+
+    public static int[][] criarElemento(TipoElemento tipo, int tamanho) {
+        int[][] elemento = new int[tamanho][tamanho];
+        int centro = tamanho / 2;
+
+        for (int i = 0; i < tamanho; i++) {
+            for (int j = 0; j < tamanho; j++) {
+
+                if (tipo == TipoElemento.QUADRADO) {
+                    elemento[i][j] = 1;
+                } else if (tipo == TipoElemento.CRUZ) {
+                    elemento[i][j] = (i == centro || j == centro) ? 1 : 0;
+                }
+
+            }
+        }
+        return elemento;
+    }
+
+
+    public static BufferedImage processarErosaoDilatacao(
+            Operacao operacao,
+            TipoElemento tipoElemento,
+            int tamanhoElemento
+    ) {
+
+        final int largura = originalImage.getWidth();
+        final int altura = originalImage.getHeight();
+
+        final int[][] elementoEstruturante =
+                criarElemento(tipoElemento, tamanhoElemento);
+
+        final int offset = tamanhoElemento / 2;
+
+        final int[][] imagemBinaria = new int[altura][largura];
+
+        final int threshold = 127;
+
+        for (int y = 0; y < altura; y++) {
+            for (int x = 0; x < largura; x++) {
+
+                int rgb = originalImage.getRGB(x, y);
+
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+
+                int cinza = (int) (
+                        0.299 * r +
+                                0.587 * g +
+                                0.114 * b
+                );
+
+                imagemBinaria[y][x] =
+                        (cinza >= threshold) ? 255 : 0;
+            }
+        }
+
+        final int[][] resultado = new int[altura][largura];
+
+        for (int y = 0; y < altura; y++) {
+            for (int x = 0; x < largura; x++) {
+
+                if (operacao == Operacao.DILATACAO) {
+
+                    boolean encontrouBranco = false;
+
+                    for (int i = 0; i < tamanhoElemento && !encontrouBranco; i++) {
+                        for (int j = 0; j < tamanhoElemento; j++) {
+
+                            if (elementoEstruturante[i][j] == 0) {
+                                continue;
+                            }
+
+                            int nx = x + j - offset;
+                            int ny = y + i - offset;
+
+                            if (nx < 0 || nx >= largura ||
+                                    ny < 0 || ny >= altura) {
+                                continue;
+                            }
+
+                            if (imagemBinaria[ny][nx] == 255) {
+                                encontrouBranco = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    resultado[y][x] =
+                            encontrouBranco ? 255 : 0;
+                }
+
+                else {
+
+                    boolean encontrouPreto = false;
+
+                    for (int i = 0; i < tamanhoElemento && !encontrouPreto; i++) {
+                        for (int j = 0; j < tamanhoElemento; j++) {
+
+                            if (elementoEstruturante[i][j] == 0) {
+                                continue;
+                            }
+
+                            int nx = x + j - offset;
+                            int ny = y + i - offset;
+
+                            if (nx < 0 || nx >= largura ||
+                                    ny < 0 || ny >= altura) {
+
+                                encontrouPreto = true;
+                                break;
+                            }
+
+                            if (imagemBinaria[ny][nx] == 0) {
+                                encontrouPreto = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    resultado[y][x] =
+                            encontrouPreto ? 0 : 255;
+                }
+            }
+        }
+
+        BufferedImage imagemFinal = getBufferedImage(largura, altura, resultado);
+
+        return imagemFinal;
+    }
+
+    private static BufferedImage getBufferedImage(int largura, int altura, int[][] resultado) {
+        BufferedImage imagemFinal = new BufferedImage(
+                largura,
+                altura,
+                BufferedImage.TYPE_INT_RGB
+        );
+
+        for (int y = 0; y < altura; y++) {
+            for (int x = 0; x < largura; x++) {
+
+                int valor = resultado[y][x];
+
+                int rgb =
+                        (valor << 16) |
+                                (valor << 8)  |
+                                valor;
+
+                imagemFinal.setRGB(x, y, rgb);
+            }
+        }
+        return imagemFinal;
+    }
+
+    // Setter para definir a imagem original
+    public static void setOriginalImage(BufferedImage img) {
+        originalImage = img;
     }
 }
