@@ -541,63 +541,95 @@ public class DesafioController {
         int w = img.getWidth(), h = img.getHeight();
         int minArea = Math.max(100, (w * h) / 1000);
 
+        // Todas as placas regulamentares do desafio (Pare, Velocidade máxima,
+        // Proibido estacionar, Sentido proibido) são VERMELHAS. Segmentamos o
+        // vermelho e classificamos cada placa pelo seu formato/conteúdo.
+        boolean[][] red = maskHue(img, 345f, 15f, 0.4f, 0.2f);
+
+        List<int[]> caixas = new ArrayList<>();
+        for (Componente c : encontrarComponentes(red, w, h))
+            if (c.area() >= minArea)
+                caixas.add(new int[]{ c.minX, c.minY, c.maxX, c.maxY, c.area() });
+
+        // Uma mesma placa pode aparecer fracionada (ex.: a borda branca do PARE
+        // separa o anel externo do miolo). Mesclamos caixas sobrepostas.
+        List<int[]> placas = mesclarCaixas(caixas);
+        placas.sort(Comparator.comparingInt(p -> p[0])); // leitura esquerda -> direita
+
         StringBuilder sb = new StringBuilder("Placas identificadas:\n\n");
-        int total = 0;
+        List<String> tipos = new ArrayList<>();
+        for (int[] g : placas) {
+            int lw = g[2] - g[0] + 1, lh = g[3] - g[1] + 1;
+            if (lw < 12 || lh < 12) continue;
+            String tipo = classificarPlacaVermelha(img, red, g);
+            tipos.add(tipo);
+            caixaColoridaRect(res, g[0], g[1], lw, lh, Color.RED, tipo);
+            sb.append(String.format("  • %-20s em (%d, %d)%n", tipo, g[0], g[1]));
+        }
 
-        // Vermelho: PARE / proibição
-        total += detectarPlacas(img, res, sb,
-                maskHue(img, 345f, 15f, 0.4f, 0.2f),
-                w, h, minArea, "vermelho");
-        // Amarelo/laranja: advertência
-        total += detectarPlacas(img, res, sb,
-                maskHue(img, 30f, 75f, 0.5f, 0.4f),
-                w, h, minArea, "amarelo");
-        // Azul: informativo
-        total += detectarPlacas(img, res, sb,
-                maskHue(img, 200f, 240f, 0.4f, 0.2f),
-                w, h, minArea, "azul");
-        // Verde: permissão/direção
-        total += detectarPlacas(img, res, sb,
-                maskHue(img, 100f, 160f, 0.35f, 0.2f),
-                w, h, minArea, "verde");
-
-        if (total == 0) sb.append("Nenhuma placa detectada.");
-        else sb.append("\nTotal: ").append(total).append(" placa(s).");
+        if (tipos.isEmpty()) sb.append("Nenhuma placa detectada.");
+        else sb.append("\nR: ").append(String.join(", ", tipos));
 
         return new ResultadoDesafio(res, sb.toString());
     }
 
-    private static int detectarPlacas(BufferedImage img, BufferedImage res, StringBuilder sb,
-                                      boolean[][] mask, int w, int h, int minArea, String cor) {
-        Color destaque = switch (cor) {
-            case "vermelho" -> Color.RED;
-            case "amarelo"  -> Color.ORANGE;
-            case "azul"     -> Color.BLUE;
-            default         -> new Color(0, 160, 0);
-        };
+    /**
+     * Classifica uma placa vermelha em: Pare, Velocidade máxima, Proibido
+     * estacionar ou Sentido proibido — a partir de três medidas geométricas:
+     *
+     *  • preenchimento do vermelho (octógono sólido do PARE ~0,67 x anel vazado
+     *    dos círculos ~0,2);
+     *  • presença da faixa diagonal ("risco") detectada como vermelho no miolo
+     *    (placas de proibição têm risco; a de velocidade não);
+     *  • formato do glifo PRETO interno (seta alta-e-estreita x letra "E"
+     *    compacta) para separar Sentido proibido de Proibido estacionar.
+     */
+    private static String classificarPlacaVermelha(BufferedImage img, boolean[][] red, int[] box) {
+        int x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3];
+        int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+        int W = img.getWidth(), H = img.getHeight();
 
-        // Componentes relevantes da cor.
-        List<int[]> caixas = new ArrayList<>();
-        for (Componente c : encontrarComponentes(mask, w, h))
-            if (c.area() >= minArea)
-                caixas.add(new int[]{ c.minX, c.minY, c.maxX, c.maxY, c.area() });
+        double redFill = (double) box[4] / ((double) bw * bh);
 
-        // Uma mesma placa pode aparecer fracionada: por exemplo, no PARE a faixa
-        // branca da borda separa o anel externo do miolo do octógono. Mesclamos
-        // caixas sobrepostas para tratá-las como UMA placa só.
-        List<int[]> placas = mesclarCaixas(caixas);
+        // 1) PARE: octógono vermelho sólido (preenchimento alto; anéis ficam ~0,2).
+        if (redFill > 0.45) return "Pare";
 
-        int count = 0;
-        for (int[] g : placas) {
-            int lw = g[2] - g[0] + 1, lh = g[3] - g[1] + 1;
-            double ar = (double) lw / lh;
-            double fill = (double) g[4] / (lw * lh);
-            String tipo = tipoDePlaca(ar, fill, cor);
-            sb.append(String.format("  [%-22s] %-7s em (%d,%d)%n", tipo, "(" + cor + ")", g[0], g[1]));
-            caixaColoridaRect(res, g[0], g[1], lw, lh, destaque, tipo);
-            count++;
+        // 2) Risco diagonal: fração de vermelho na janela central (40%).
+        int cw0 = x0 + (int)(bw * 0.30), cw1 = x0 + (int)(bw * 0.70);
+        int ch0 = y0 + (int)(bh * 0.30), ch1 = y0 + (int)(bh * 0.70);
+        int redIn = 0, tot = 0;
+        for (int y = Math.max(0, ch0); y < Math.min(H, ch1); y++)
+            for (int x = Math.max(0, cw0); x < Math.min(W, cw1); x++) {
+                tot++;
+                if (red[y][x]) redIn++;
+            }
+        double centerRed = tot == 0 ? 0 : (double) redIn / tot;
+
+        // Anel limpo, sem risco no miolo -> apenas dígitos = Velocidade máxima.
+        if (centerRed < 0.06) return "Velocidade máxima";
+
+        // 3) Com risco: separa pelo glifo PRETO interno (exclui o vermelho do risco,
+        //    cujo R alto não passa no teste de "todos os canais escuros").
+        int ix0 = x0 + (int)(bw * 0.12), ix1 = x1 - (int)(bw * 0.12);
+        int iy0 = y0 + (int)(bh * 0.12), iy1 = y1 - (int)(bh * 0.12);
+        int gx0 = Integer.MAX_VALUE, gy0 = Integer.MAX_VALUE, gx1 = -1, gy1 = -1;
+        for (int y = Math.max(0, iy0); y <= Math.min(H - 1, iy1); y++)
+            for (int x = Math.max(0, ix0); x <= Math.min(W - 1, ix1); x++) {
+                Color c = new Color(img.getRGB(x, y));
+                if (c.getRed() < 90 && c.getGreen() < 90 && c.getBlue() < 90) {
+                    if (x < gx0) gx0 = x; if (x > gx1) gx1 = x;
+                    if (y < gy0) gy0 = y; if (y > gy1) gy1 = y;
+                }
+            }
+        if (gx1 >= 0) {
+            double glifoAR   = (double)(gx1 - gx0 + 1) / (gy1 - gy0 + 1);
+            double glifoHrel = (double)(gy1 - gy0 + 1) / bh;
+            // Seta = glifo alto e estreito (Hrel~0,73, AR~0,30);
+            // "E"  = glifo compacto         (Hrel~0,45, AR~0,43).
+            if (glifoHrel > 0.58 || glifoAR < 0.37) return "Sentido proibido";
+            return "Proibido estacionar";
         }
-        return count;
+        return "Proibição";
     }
 
     /** Mescla caixas (minX,minY,maxX,maxY,area) que se sobrepõem; a área do
@@ -633,33 +665,6 @@ public class DesafioController {
         return a[0] <= b[2] + t && b[0] <= a[2] + t && a[1] <= b[3] + t && b[1] <= a[3] + t;
     }
 
-    private static String tipoDePlaca(double ar, double fill, String cor) {
-        return switch (cor) {
-            case "vermelho" -> {
-                boolean quadrada = ar > 0.8 && ar < 1.25;
-                // Octógono PARE é sólido (preenchimento alto); círculos de
-                // proibição/regulamentação são anéis vazados (preenchimento baixo).
-                if (quadrada && fill > 0.55) yield "PARE";
-                if (quadrada)                yield "PROIBIÇÃO";
-                yield "REGULAMENTAÇÃO";
-            }
-            case "amarelo"  -> {
-                if (ar > 0.8 && ar < 1.2 && fill < 0.60) yield "ADVERTÊNCIA";
-                if (ar > 1.5)                            yield "ADVERTÊNCIA (FAIXA)";
-                yield "ADVERTÊNCIA";
-            }
-            case "azul"     -> {
-                if (ar > 1.3)  yield "INFORMATIVO (HORIZ.)";
-                if (ar < 0.75) yield "INFORMATIVO (VERT.)";
-                yield "INFORMATIVO";
-            }
-            default         -> {
-                if (ar > 1.2) yield "INDICAÇÃO (HORIZ.)";
-                yield "INDICAÇÃO";
-            }
-        };
-    }
-
     // =========================================================
     // DESAFIO E — BARRAS VERTICAIS
     // =========================================================
@@ -686,35 +691,71 @@ public class DesafioController {
         // Ordena por posição X (esquerda para direita)
         barras.sort(Comparator.comparingInt(c -> c.minX));
 
-        // Identifica mais alta e mais baixa
-        Componente maisAlta  = barras.stream().max(Comparator.comparingInt(Componente::altura)).orElse(barras.get(0));
-        Componente maisBaixa = barras.stream().min(Comparator.comparingInt(Componente::altura)).orElse(barras.get(0));
+        // O desafio pede o VALOR de cada barra no eixo Y (uma barra que sobe até
+        // 20 vale 20), não a altura em pixels. Para isso:
+        //   • a base das barras (todas assentam na mesma linha) é o valor 0;
+        //   • lemos os rótulos numéricos do eixo Y (OCR de dígitos) e medimos
+        //     quantos pixels valem 1 unidade;
+        //   • o valor da barra = (base - topo da barra) / pixelsPorUnidade.
+        int baseY = 0;
+        for (Componente c : barras) baseY = Math.max(baseY, c.maxY);
 
-        // Anota resultado na imagem
+        int xLimite = barras.get(0).minX - 4;            // faixa à esquerda da 1ª barra
+        List<double[]> rotulos = lerEixoY(img, xLimite); // [valor, yCentro]
+        Double pxPorUnidade = calibrarEixo(rotulos, baseY);
+
+        boolean calibrado = pxPorUnidade != null;
+        String un = calibrado ? "" : "px";               // sem eixo legível -> mostra pixels
+
+        int[] valores = new int[barras.size()];
+        for (int i = 0; i < barras.size(); i++) {
+            if (calibrado)
+                valores[i] = Math.max(0, (int) Math.round((baseY - barras.get(i).minY) / pxPorUnidade));
+            else
+                valores[i] = barras.get(i).altura();
+        }
+
+        // Maior e menor POR VALOR (barras iguais -> maior == menor).
+        int idxMax = 0, idxMin = 0;
+        for (int i = 1; i < valores.length; i++) {
+            if (valores[i] > valores[idxMax]) idxMax = i;
+            if (valores[i] < valores[idxMin]) idxMin = i;
+        }
+        int valMax = valores[idxMax], valMin = valores[idxMin];
+        boolean todasIguais = valMax == valMin;
+
+        // Anota a imagem: maior em vermelho, menor em azul, demais em verde.
         for (int i = 0; i < barras.size(); i++) {
             Componente c = barras.get(i);
-            Color cor = (c == maisAlta) ? Color.RED : (c == maisBaixa) ? Color.BLUE : new Color(0, 160, 0);
-            caixaColorida(res, c, cor, "B" + (i + 1));
-            // Rótulo de altura abaixo da barra
+            Color cor = todasIguais ? new Color(0, 160, 0)
+                      : (valores[i] == valMax) ? Color.RED
+                      : (valores[i] == valMin) ? Color.BLUE : new Color(0, 160, 0);
+            caixaColorida(res, c, cor, "B" + (i + 1) + "=" + valores[i] + un);
             Graphics2D g = res.createGraphics();
             g.setColor(cor);
-            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10));
-            g.drawString(c.altura() + "px", c.minX, Math.min(h - 2, c.maxY + 12));
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14));
+            String txt = valores[i] + un;
+            g.drawString(txt, c.minX + Math.max(0, (c.largura() - txt.length() * 8) / 2),
+                    Math.max(14, c.minY - 5));
             g.dispose();
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("%-8s %-8s %-8s%n", "Barra", "Altura", "Largura"));
-        sb.append("-".repeat(26)).append("\n");
+        if (!calibrado)
+            sb.append("[aviso] Eixo Y não pôde ser lido; valores expressos em pixels.\n\n");
+        sb.append(String.format("%-8s %-8s%n", "Barra", "Valor"));
+        sb.append("-".repeat(20)).append("\n");
         for (int i = 0; i < barras.size(); i++) {
-            Componente c = barras.get(i);
-            String mark = (c == maisAlta) ? " ▲MAX" : (c == maisBaixa) ? " ▼MIN" : "";
-            sb.append(String.format("B%-7d %-8d %-8d%s%n", i+1, c.altura(), c.largura(), mark));
+            String mark = todasIguais ? ""
+                        : (valores[i] == valMax) ? "  <- maior"
+                        : (valores[i] == valMin) ? "  <- menor" : "";
+            sb.append(String.format("B%-7d %-8s%s%n", i + 1, valores[i] + un, mark));
         }
-        sb.append("\nMAIS ALTA  (▲ vermelho): B").append(barras.indexOf(maisAlta)  + 1)
-          .append(" — ").append(maisAlta.altura()).append("px");
-        sb.append("\nMAIS BAIXA (▼ azul):     B").append(barras.indexOf(maisBaixa) + 1)
-          .append(" — ").append(maisBaixa.altura()).append("px");
+        sb.append("\n");
+        if (todasIguais)
+            sb.append("Todas as barras têm o mesmo valor.\n");
+        sb.append("R: Maior = ").append(valMax).append(un)
+          .append(" | Menor = ").append(valMin).append(un);
 
         return new ResultadoDesafio(res, sb.toString());
     }
@@ -725,5 +766,84 @@ public class DesafioController {
             if (c.area() >= minArea && c.altura() >= c.largura() * 0.8)
                 out.add(c);
         return out;
+    }
+
+    /** Templates de referência dos dígitos 0–9 (3 fontes), para ler o eixo Y. */
+    private static List<Template> gerarTemplatesDigitos(int tw, int th) {
+        List<Template> lista = new ArrayList<>();
+        String[] fontes = { Font.SANS_SERIF, Font.SERIF, Font.MONOSPACED };
+        for (String fonte : fontes)
+            for (char ch = '0'; ch <= '9'; ch++)
+                lista.add(new Template(ch, normalizarGlifo(renderizarGlifo(ch, fonte), tw, th)));
+        return lista;
+    }
+
+    /**
+     * Lê os rótulos numéricos do eixo Y (faixa escura à esquerda da 1ª barra).
+     * Agrupa os dígitos de um mesmo número pela proximidade vertical, reconhece
+     * cada dígito por template e devolve pares [valor, yCentro].
+     */
+    private static List<double[]> lerEixoY(BufferedImage img, int xLimite) {
+        int w = img.getWidth(), h = img.getHeight();
+        int xMax = Math.max(0, Math.min(xLimite, w));
+        if (xMax < 6) return new ArrayList<>();
+
+        boolean[][] mask = new boolean[h][w];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < xMax; x++) {
+                Color c = new Color(img.getRGB(x, y));
+                mask[y][x] = (c.getRed() + c.getGreen() + c.getBlue()) / 3 < 120;
+            }
+
+        List<Componente> digs = new ArrayList<>();
+        for (Componente c : encontrarComponentes(mask, w, h))
+            if (c.area() >= 15 && c.altura() >= 8 && c.altura() <= h / 4 && c.largura() <= w / 6)
+                digs.add(c);
+        if (digs.isEmpty()) return new ArrayList<>();
+
+        int somaAlt = 0;
+        for (Componente c : digs) somaAlt += c.altura();
+        int tol = Math.max(12, (somaAlt / digs.size()) * 7 / 10); // ~70% da altura média
+
+        digs.sort(Comparator.comparingInt(c -> (c.minY + c.maxY) / 2));
+        List<Template> digitos = gerarTemplatesDigitos(48, 64);
+
+        List<double[]> rotulos = new ArrayList<>();
+        int i = 0;
+        while (i < digs.size()) {
+            int ycRef = (digs.get(i).minY + digs.get(i).maxY) / 2;
+            List<Componente> linha = new ArrayList<>();
+            while (i < digs.size() && Math.abs((digs.get(i).minY + digs.get(i).maxY) / 2 - ycRef) <= tol)
+                linha.add(digs.get(i++));
+
+            linha.sort(Comparator.comparingInt(c -> c.minX));    // dígitos esquerda -> direita
+            StringBuilder num = new StringBuilder();
+            long somaYc = 0;
+            for (Componente c : linha) {
+                char d = classificarPorTemplate(img, c, digitos);
+                if (d >= '0' && d <= '9') num.append(d);
+                somaYc += (c.minY + c.maxY) / 2;
+            }
+            if (num.length() > 0) {
+                try {
+                    rotulos.add(new double[]{ Integer.parseInt(num.toString()), (double) somaYc / linha.size() });
+                } catch (NumberFormatException ignored) { }
+            }
+        }
+        return rotulos;
+    }
+
+    /** Pixels por unidade do eixo Y = mediana de (base - yRótulo)/valor. */
+    private static Double calibrarEixo(List<double[]> rotulos, int baseY) {
+        List<Double> ppus = new ArrayList<>();
+        for (double[] r : rotulos) {
+            int valor = (int) r[0];
+            double yc = r[1];
+            if (valor > 0 && baseY - yc > 4) ppus.add((baseY - yc) / valor);
+        }
+        if (ppus.isEmpty()) return null;
+        Collections.sort(ppus);
+        double ppu = ppus.get(ppus.size() / 2);
+        return ppu > 0 ? ppu : null;
     }
 }
