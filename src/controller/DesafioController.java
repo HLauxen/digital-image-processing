@@ -149,183 +149,159 @@ public class DesafioController {
         return m;
     }
 
+    /** Máscara por saturação: mantém regiões coloridas (cores vivas) e
+     *  descarta fundo branco, cinzas claros e textos pretos (saturação ~0). */
+    private static boolean[][] maskColorida(BufferedImage img, float sMin, float bMin) {
+        int w = img.getWidth(), h = img.getHeight();
+        boolean[][] m = new boolean[h][w];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                Color c = new Color(img.getRGB(x, y));
+                float[] hsb = Color.RGBtoHSB(c.getRed(), c.getGreen(), c.getBlue(), null);
+                m[y][x] = hsb[1] >= sMin && hsb[2] >= bMin;
+            }
+        return m;
+    }
+
     private static void caixaColorida(BufferedImage img, Componente c, Color cor, String label) {
+        caixaColoridaRect(img, c.minX, c.minY, c.largura(), c.altura(), cor, label);
+    }
+
+    /** Desenha uma caixa rotulada a partir de um retângulo (x,y,largura,altura). */
+    private static void caixaColoridaRect(BufferedImage img, int x, int y, int lw, int lh,
+                                          Color cor, String label) {
         Graphics2D g = img.createGraphics();
         g.setColor(cor);
         g.setStroke(new BasicStroke(2));
-        g.drawRect(c.minX, c.minY, c.largura() - 1, c.altura() - 1);
+        g.drawRect(x, y, lw - 1, lh - 1);
         g.setColor(Color.WHITE);
-        g.fillRect(c.minX, c.minY - 14, label.length() * 7 + 4, 14);
+        g.fillRect(x, y - 14, label.length() * 7 + 4, 14);
         g.setColor(cor);
         g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
-        g.drawString(label, c.minX + 2, c.minY - 2);
+        g.drawString(label, x + 2, y - 2);
         g.dispose();
     }
 
     // =========================================================
-    // DESAFIO A — RELÓGIO ANALÓGICO  (varredura radial)
+    // DESAFIO A — RELÓGIO ANALÓGICO  (varredura radial dos ponteiros)
     //
-    // Por que a abordagem por componentes conexos falhava:
-    //  1. Os dois ponteiros se UNEM no pino central → FloodFill os
-    //     agrupa num único componente; o segundo candidato acaba sendo
-    //     um número ou marcação da borda.
-    //  2. A diagonal do bounding-box é ruim para distinguir hora/minuto
-    //     quando os ponteiros formam um único bloco.
-    //  3. pixelMaisLonge() pode retornar a cauda da seta (ponta traseira)
-    //     em vez da ponta frontal, invertendo o ângulo 180°.
+    // Por que as tentativas anteriores erravam:
+    //  • A varredura ia até ~80–92% do raio, alcançando os NÚMEROS e as
+    //    MARCAÇÕES da borda → picos falsos (ex.: detectar um "ponteiro" às
+    //    349° onde só existe o "12").
+    //  • Medir o comprimento por densidade confundia a CAUDA traseira do
+    //    ponteiro (contrapeso) com um segundo ponteiro.
     //
-    // Solução — varredura radial:
-    //  Para cada ângulo θ ∈ [0°,360°), conta quantos pixels escuros
-    //  existem ao longo da linha (centro → θ) dentro de [Rmin, Rmax].
-    //  • Rmax = 65% do semi-eixo menor  →  evita números e marcações
-    //    da borda, que ficam nos 80–95% externos do raio.
-    //  • Os dois ângulos de pico = direções dos ponteiros.
-    //  • O pico de maior comprimento (via comprimentoRadial) = minuteiro.
+    // Estratégia robusta adotada:
+    //  • Centro e raio vêm do maior componente escuro (o aro do relógio).
+    //  • Os ponteiros saem do centro; números/marcações ficam a ≳63% do raio.
+    //    Por isso a varredura usa apenas o anel radial [R/15 , 0.60R]: contém
+    //    os ponteiros inteiros e exclui hub, números, marcações e o aro.
+    //  • Para cada ângulo medimos o ALCANCE (pixel escuro mais distante).
+    //    O alcance privilegia a ponta real do ponteiro, ignorando a cauda.
+    //  • Ponteiro mais comprido = minuteiro; o outro = horário.
     // =========================================================
     private static ResultadoDesafio processarRelogio(BufferedImage img) {
         BufferedImage res = copiar(img);
         int w = img.getWidth(), h = img.getHeight();
 
-        // Threshold 128 para detectar a borda do relógio (inclusive bordas finas).
-        // A varredura radial usa mask90 (threshold 90) para contar apenas pixels
-        // verdadeiramente escuros (ponteiros), evitando ruído de sombras/números.
-        boolean[][] mask128 = maskEscuro(img, 128);
-        boolean[][] mask = maskEscuro(img, 90);
-        List<Componente> comps = encontrarComponentes(mask128, w, h);
+        boolean[][] mask = maskEscuro(img, 128);
+        List<Componente> comps = encontrarComponentes(mask, w, h);
 
-        // ── Passo 0: Detectar o centro do relógio ────────────────────────────
-        // Usa diagonal() — não area() — para encontrar o anel externo.
-        // Com area(), uma borda fina perde para os ponteiros espessos.
-        // Com diagonal(), o componente de maior extensão espacial é sempre o anel.
-        Componente maiorComp = null;
+        // ── Centro e raio: maior componente em extensão espacial = aro externo ─
+        Componente aro = null;
         for (Componente c : comps)
-            if (maiorComp == null || c.diagonal() > maiorComp.diagonal()) maiorComp = c;
+            if (aro == null || c.diagonal() > aro.diagonal()) aro = c;
 
-        int cx, cy, clockRadius;
-        if (maiorComp != null && maiorComp.diagonal() > Math.min(w, h) * 0.3) {
-            cx = (maiorComp.minX + maiorComp.maxX) / 2;
-            cy = (maiorComp.minY + maiorComp.maxY) / 2;
-            clockRadius = Math.max(maiorComp.largura(), maiorComp.altura()) / 2;
+        int cx, cy, raio;
+        if (aro != null && aro.diagonal() > Math.min(w, h) * 0.3) {
+            cx = (aro.minX + aro.maxX) / 2;
+            cy = (aro.minY + aro.maxY) / 2;
+            raio = Math.max(aro.largura(), aro.altura()) / 2;
         } else {
-            cx = w / 2;
-            cy = h / 2;
-            clockRadius = Math.min(w, h) / 2;
+            cx = w / 2; cy = h / 2; raio = Math.min(w, h) / 2;
         }
 
-        // ── Passo 1: Varredura radial de densidade ───────────────────────────
-        // Rmax = 78%: cobre ponteiros (horário ~65-70%, minuteiro ~80-85%)
-        // sem atingir dígitos (~80-88%) nem marcações (~90-95%).
-        // RmaxLong = 92%: mede o comprimento real de cada ponteiro.
-        int Rmin = Math.max(8, clockRadius / 10);
-        int Rmax = (int)(clockRadius * 0.78);
-        int RmaxLong = (int)(clockRadius * 0.92);
+        int Rmin = Math.max(8, raio / 15);   // ignora o hub central
+        double Rmax = raio * 0.60;           // pára antes dos números (~63% do raio)
 
-        // Resolução de 0,5° (720 passos) para melhor precisão angular.
+        // ── Varredura radial de alcance (resolução de 0,5°) ────────────────────
         final int PASSOS = 720;
-        double[] densidade = new double[PASSOS];
-        for (int ang = 0; ang < PASSOS; ang++) {
-            double graus = ang * 360.0 / PASSOS;
+        double[] alcance = new double[PASSOS];
+        for (int a = 0; a < PASSOS; a++) {
+            double graus = a * 360.0 / PASSOS;
             double dx = Math.sin(Math.toRadians(graus));
             double dy = -Math.cos(Math.toRadians(graus)); // 0° = topo (12h), horário
-            int count = 0;
+            int ultimo = 0;
             for (int r = Rmin; r <= Rmax; r++) {
                 int px = cx + (int) Math.round(dx * r);
                 int py = cy + (int) Math.round(dy * r);
-                if (px >= 0 && px < w && py >= 0 && py < h && mask[py][px])
-                    count++;
+                if (px >= 0 && px < w && py >= 0 && py < h && mask[py][px]) ultimo = r;
             }
-            densidade[ang] = count;
+            alcance[a] = ultimo;
         }
 
-        // ── Passo 2: Suavização angular (janela ±8 passos = ±4°) ─────────────
-        double[] smooth = new double[PASSOS];
+        // ── Suavização angular (±3 passos = ±1,5°) ─────────────────────────────
+        double[] suave = new double[PASSOS];
         for (int a = 0; a < PASSOS; a++) {
             double s = 0;
-            for (int k = -8; k <= 8; k++) s += densidade[(a + k + PASSOS) % PASSOS];
-            smooth[a] = s / 17.0;
+            for (int k = -3; k <= 3; k++) s += alcance[(a + k + PASSOS) % PASSOS];
+            suave[a] = s / 7.0;
         }
 
-        // ── Passo 3: Pico 1 = maior densidade ────────────────────────────────
-        int angPico1 = 0;
-        for (int a = 1; a < PASSOS; a++)
-            if (smooth[a] > smooth[angPico1]) angPico1 = a;
-
-        // ── Passo 4: Pico 2 = maior densidade afastado ≥ 20° do pico 1 ──────
-        // 20° = 40 passos com resolução de 0,5°
-        int angPico2 = -1;
+        // ── Pico 1 = maior alcance ; Pico 2 = maior alcance ≥ 12° distante ─────
+        int p1 = 0;
+        for (int a = 1; a < PASSOS; a++) if (suave[a] > suave[p1]) p1 = a;
+        int p2 = -1;
         for (int a = 0; a < PASSOS; a++) {
-            int diff = Math.abs(a - angPico1);
-            diff = Math.min(diff, PASSOS - diff);
-            if (diff < 40) continue;
-            if (angPico2 == -1 || smooth[a] > smooth[angPico2]) angPico2 = a;
+            int d = Math.abs(a - p1); d = Math.min(d, PASSOS - d);
+            if (d < 24) continue; // 24 passos = 12°
+            if (p2 == -1 || suave[a] > suave[p2]) p2 = a;
         }
 
-        double limiar = (Rmax - Rmin) * 0.08;
+        String horario, debug;
+        if (p2 >= 0 && suave[p1] > Rmin * 1.2) {
+            double g1 = p1 * 360.0 / PASSOS, g2 = p2 * 360.0 / PASSOS;
+            double len1 = suave[p1], len2 = suave[p2];
 
-        // Converte índices de passos para graus reais
-        double grausPico1 = angPico1 * 360.0 / PASSOS;
-        double grausPico2 = (angPico2 >= 0) ? angPico2 * 360.0 / PASSOS : -1;
+            // Ponteiro mais comprido = minuteiro.
+            double angMin = (len1 >= len2) ? g1 : g2;
+            double angHor = (len1 >= len2) ? g2 : g1;
+            int lenMin = (int) Math.max(len1, len2);
+            int lenHor = (int) Math.min(len1, len2);
 
-        String horario;
-        String debug = String.format(
-                "[debug] centro=(%d,%d)  raio=%d  Rmax=%d(78%%)  RmaxLong=%d(92%%)%n" +
-                "pico1=%.1f° (%.1f)  pico2=%.1f° (%.1f)  limiar=%.1f",
-                cx, cy, clockRadius, Rmax, RmaxLong,
-                grausPico1, smooth[angPico1],
-                grausPico2, angPico2 >= 0 ? smooth[angPico2] : 0.0,
-                limiar);
-
-        if (angPico2 >= 0 && smooth[angPico1] > limiar) {
-
-            int comp1 = comprimentoRadial(mask, cx, cy, (int)Math.round(grausPico1), Rmin, RmaxLong, w, h);
-            int comp2 = comprimentoRadial(mask, cx, cy, (int)Math.round(grausPico2), Rmin, RmaxLong, w, h);
-
-            // Ponteiro mais longo = minuteiro
-            double angMinGraus = (comp1 >= comp2) ? grausPico1 : grausPico2;
-            double angHorGraus = (comp1 >= comp2) ? grausPico2 : grausPico1;
-            int lenMin = Math.max(comp1, comp2);
-            int lenHor = Math.min(comp1, comp2);
-
-            int mins  = (int) Math.round(angMinGraus / 6.0)  % 60;
-            int horas = (int) Math.round(angHorGraus / 30.0) % 12;
+            int mins  = (int) Math.round(angMin / 6.0) % 60;
+            // Hora corrigida pelo avanço do ponteiro das horas: no horário H:mm
+            // ele está em H*30 + mm*0,5 graus. Descontar mm*0,5 evita o erro de
+            // arredondamento na fronteira (ex.: ponteiro em 7,5h às 7:30).
+            int horas = (int) Math.round((angHor - mins * 0.5) / 30.0);
+            horas = ((horas % 12) + 12) % 12;
             if (horas == 0) horas = 12;
 
             horario = String.format("%02d:%02d", horas, mins);
 
-            desenharSeta(res, cx, cy, (int)Math.round(angMinGraus), lenMin, new Color(30, 100, 255), "MIN");
-            desenharSeta(res, cx, cy, (int)Math.round(angHorGraus), lenHor, new Color(220, 40, 40),  "HR");
+            desenharSeta(res, cx, cy, (int) Math.round(angMin), lenMin, new Color(30, 100, 255), "MIN");
+            desenharSeta(res, cx, cy, (int) Math.round(angHor), lenHor, new Color(220, 40, 40),  "HR");
 
             Graphics2D g = res.createGraphics();
             g.setColor(Color.GREEN);
             g.fillOval(cx - 5, cy - 5, 10, 10);
             g.dispose();
 
+            debug = String.format(
+                    "[debug] centro=(%d,%d)  raio=%d  Rmin=%d  Rmax=%d (60%%)%n" +
+                    "minuteiro=%.1f° (alcance %.0f)  horário=%.1f° (alcance %.0f)",
+                    cx, cy, raio, Rmin, (int) Rmax,
+                    angMin, Math.max(len1, len2), angHor, Math.min(len1, len2));
         } else {
             horario = "Ponteiros não detectados";
+            debug = String.format("[debug] centro=(%d,%d) raio=%d — sem dois picos válidos", cx, cy, raio);
         }
 
         return new ResultadoDesafio(res,
                 "Horário detectado: " + horario + "\n\n" +
                 "Azul  = minuteiro  |  Vermelho = horário\n" +
                 "Verde = centro detectado\n\n" + debug);
-    }
-
-    /**
-     * Retorna a distância (em pixels) do pixel escuro mais distante do centro
-     * ao longo do ângulo dado, dentro de [Rmin, Rmax].
-     */
-    private static int comprimentoRadial(boolean[][] mask, int cx, int cy,
-                                         int ang, int Rmin, int Rmax, int w, int h) {
-        double dx = Math.sin(Math.toRadians(ang));
-        double dy = -Math.cos(Math.toRadians(ang));
-        int ultimo = Rmin;
-        for (int r = Rmin; r <= Rmax; r++) {
-            int px = cx + (int) Math.round(dx * r);
-            int py = cy + (int) Math.round(dy * r);
-            if (px >= 0 && px < w && py >= 0 && py < h && mask[py][px])
-                ultimo = r;
-        }
-        return ultimo;
     }
 
     /** Desenha uma linha colorida saindo do centro na direção do ângulo. */
@@ -432,8 +408,8 @@ public class DesafioController {
             return linhaA != linhaB ? Integer.compare(linhaA, linhaB) : Integer.compare(a.minX, b.minX);
         });
 
-        // Gera templates de referência A-Z e classifica cada componente
-        Map<Character, BufferedImage> templates = gerarTemplates(30, 40);
+        // Gera templates de referência A-Z (3 fontes) e classifica cada componente
+        List<Template> templates = gerarTemplates(48, 64);
         Set<Character> encontradas = new LinkedHashSet<>();
         Color[] palette = {Color.RED, new Color(0,150,0), Color.BLUE, new Color(200,0,200)};
 
@@ -464,54 +440,95 @@ public class DesafioController {
         return out;
     }
 
-    /** Renderiza cada letra A-Z com AWT para usar como template de comparação. */
-    private static Map<Character, BufferedImage> gerarTemplates(int tw, int th) {
-        Map<Character, BufferedImage> map = new LinkedHashMap<>();
-        Font font = new Font(Font.SANS_SERIF, Font.BOLD, th - 4);
-        for (char ch = 'A'; ch <= 'Z'; ch++) {
-            BufferedImage t = new BufferedImage(tw, th, BufferedImage.TYPE_BYTE_GRAY);
-            Graphics2D g = t.createGraphics();
-            g.setColor(Color.WHITE);
-            g.fillRect(0, 0, tw, th);
-            g.setColor(Color.BLACK);
-            g.setFont(font);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-            FontMetrics fm = g.getFontMetrics();
-            int tx = (tw - fm.charWidth(ch)) / 2;
-            int ty = (th + fm.getAscent() - fm.getDescent()) / 2;
-            g.drawString(String.valueOf(ch), tx, ty);
-            g.dispose();
-            map.put(ch, t);
-        }
-        return map;
+    /** Template A–Z: caractere renderizado e normalizado (recorte + escala). */
+    private static class Template {
+        final char ch;
+        final BufferedImage img;
+        Template(char ch, BufferedImage img) { this.ch = ch; this.img = img; }
     }
 
-    private static char classificarPorTemplate(BufferedImage img, Componente c,
-                                               Map<Character, BufferedImage> templates) {
-        // Extrai sub-imagem do componente e redimensiona para o tamanho do template
-        int tw = templates.values().iterator().next().getWidth();
-        int th = templates.values().iterator().next().getHeight();
+    /**
+     * Gera os templates A–Z em TRÊS famílias tipográficas (sem serifa, com
+     * serifa e monoespaçada). Comparar contra várias fontes torna o
+     * reconhecimento robusto ao tipo de letra usado na imagem — era a causa
+     * de B→H e C→L quando só existia a fonte sem serifa.
+     */
+    private static List<Template> gerarTemplates(int tw, int th) {
+        List<Template> lista = new ArrayList<>();
+        String[] fontes = { Font.SANS_SERIF, Font.SERIF, Font.MONOSPACED };
+        for (String fonte : fontes)
+            for (char ch = 'A'; ch <= 'Z'; ch++)
+                lista.add(new Template(ch, normalizarGlifo(renderizarGlifo(ch, fonte), tw, th)));
+        return lista;
+    }
 
-        BufferedImage patch = new BufferedImage(tw, th, BufferedImage.TYPE_BYTE_GRAY);
-        Graphics2D g = patch.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g.drawImage(img.getSubimage(c.minX, c.minY, c.largura(), c.altura()), 0, 0, tw, th, null);
+    /** Desenha um caractere grande (preto sobre branco). */
+    private static BufferedImage renderizarGlifo(char ch, String fonte) {
+        BufferedImage t = new BufferedImage(200, 200, BufferedImage.TYPE_BYTE_GRAY);
+        Graphics2D g = t.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, 200, 200);
+        g.setColor(Color.BLACK);
+        g.setFont(new Font(fonte, Font.BOLD, 120));
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        FontMetrics fm = g.getFontMetrics();
+        g.drawString(String.valueOf(ch),
+                (200 - fm.charWidth(ch)) / 2,
+                (200 + fm.getAscent() - fm.getDescent()) / 2);
         g.dispose();
+        return t;
+    }
+
+    /**
+     * Recorta a tinta (pixels escuros) ao seu bounding-box e redimensiona para
+     * tw×th. Aplicado IGUALMENTE a templates e às letras da imagem, garante que
+     * ambos fiquem centrados e na mesma escala antes da comparação.
+     */
+    private static BufferedImage normalizarGlifo(BufferedImage src, int tw, int th) {
+        int w = src.getWidth(), h = src.getHeight();
+        int minx = w, miny = h, maxx = -1, maxy = -1;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (new Color(src.getRGB(x, y)).getRed() < 128) {
+                    if (x < minx) minx = x; if (x > maxx) maxx = x;
+                    if (y < miny) miny = y; if (y > maxy) maxy = y;
+                }
+        if (maxx < 0) { minx = 0; miny = 0; maxx = w - 1; maxy = h - 1; }
+        BufferedImage crop = src.getSubimage(minx, miny, maxx - minx + 1, maxy - miny + 1);
+
+        BufferedImage out = new BufferedImage(tw, th, BufferedImage.TYPE_BYTE_GRAY);
+        Graphics2D g = out.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, tw, th);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(crop, 0, 0, tw, th, null);
+        g.dispose();
+        return out;
+    }
+
+    /** Classifica o componente pelo template (SSD em tons de cinza) mais próximo. */
+    private static char classificarPorTemplate(BufferedImage img, Componente c, List<Template> templates) {
+        int tw = templates.get(0).img.getWidth();
+        int th = templates.get(0).img.getHeight();
+
+        BufferedImage sub = img.getSubimage(c.minX, c.minY, c.largura(), c.altura());
+        BufferedImage cinza = new BufferedImage(sub.getWidth(), sub.getHeight(), BufferedImage.TYPE_BYTE_GRAY);
+        Graphics2D gg = cinza.createGraphics();
+        gg.drawImage(sub, 0, 0, null);
+        gg.dispose();
+        BufferedImage patch = normalizarGlifo(cinza, tw, th);
 
         char melhor = '?';
         double menorErro = Double.MAX_VALUE;
-
-        for (Map.Entry<Character, BufferedImage> entry : templates.entrySet()) {
-            BufferedImage tmpl = entry.getValue();
+        for (Template t : templates) {
             double erro = 0;
-            for (int y = 0; y < th; y++) {
+            for (int y = 0; y < th; y++)
                 for (int x = 0; x < tw; x++) {
                     int p1 = new Color(patch.getRGB(x, y)).getRed();
-                    int p2 = new Color(tmpl.getRGB(x, y)).getRed();
+                    int p2 = new Color(t.img.getRGB(x, y)).getRed();
                     erro += (p1 - p2) * (p1 - p2);
                 }
-            }
-            if (erro < menorErro) { menorErro = erro; melhor = entry.getKey(); }
+            if (erro < menorErro) { menorErro = erro; melhor = t.ch; }
         }
         return melhor;
     }
@@ -552,7 +569,6 @@ public class DesafioController {
 
     private static int detectarPlacas(BufferedImage img, BufferedImage res, StringBuilder sb,
                                       boolean[][] mask, int w, int h, int minArea, String cor) {
-        Color[] cores = new Color[]{Color.RED, Color.ORANGE, Color.BLUE, Color.GREEN};
         Color destaque = switch (cor) {
             case "vermelho" -> Color.RED;
             case "amarelo"  -> Color.ORANGE;
@@ -560,37 +576,80 @@ public class DesafioController {
             default         -> new Color(0, 160, 0);
         };
 
-        List<Componente> comps = encontrarComponentes(mask, w, h);
+        // Componentes relevantes da cor.
+        List<int[]> caixas = new ArrayList<>();
+        for (Componente c : encontrarComponentes(mask, w, h))
+            if (c.area() >= minArea)
+                caixas.add(new int[]{ c.minX, c.minY, c.maxX, c.maxY, c.area() });
+
+        // Uma mesma placa pode aparecer fracionada: por exemplo, no PARE a faixa
+        // branca da borda separa o anel externo do miolo do octógono. Mesclamos
+        // caixas sobrepostas para tratá-las como UMA placa só.
+        List<int[]> placas = mesclarCaixas(caixas);
+
         int count = 0;
-        for (Componente c : comps) {
-            if (c.area() < minArea) continue;
-            String tipo = tipoDePlaca(c, cor);
-            sb.append(String.format("  [%-22s] %-7s em (%d,%d)%n", tipo, "("+cor+")", c.minX, c.minY));
-            caixaColorida(res, c, destaque, tipo);
+        for (int[] g : placas) {
+            int lw = g[2] - g[0] + 1, lh = g[3] - g[1] + 1;
+            double ar = (double) lw / lh;
+            double fill = (double) g[4] / (lw * lh);
+            String tipo = tipoDePlaca(ar, fill, cor);
+            sb.append(String.format("  [%-22s] %-7s em (%d,%d)%n", tipo, "(" + cor + ")", g[0], g[1]));
+            caixaColoridaRect(res, g[0], g[1], lw, lh, destaque, tipo);
             count++;
         }
         return count;
     }
 
-    private static String tipoDePlaca(Componente c, String cor) {
-        double ar   = c.aspectRatio();
-        double fill = c.fill();
+    /** Mescla caixas (minX,minY,maxX,maxY,area) que se sobrepõem; a área do
+     *  grupo é a soma das áreas, para estimar o preenchimento real da placa. */
+    private static List<int[]> mesclarCaixas(List<int[]> caixas) {
+        List<int[]> grupos = new ArrayList<>();
+        for (int[] c : caixas) {
+            int[] box = c.clone();
+            boolean mesclou = true;
+            while (mesclou) {
+                mesclou = false;
+                Iterator<int[]> it = grupos.iterator();
+                while (it.hasNext()) {
+                    int[] g = it.next();
+                    if (caixasSobrepoem(box, g)) {
+                        box[0] = Math.min(box[0], g[0]);
+                        box[1] = Math.min(box[1], g[1]);
+                        box[2] = Math.max(box[2], g[2]);
+                        box[3] = Math.max(box[3], g[3]);
+                        box[4] = box[4] + g[4];
+                        it.remove();
+                        mesclou = true;
+                    }
+                }
+            }
+            grupos.add(box);
+        }
+        return grupos;
+    }
 
+    private static boolean caixasSobrepoem(int[] a, int[] b) {
+        int t = 4; // tolerância em pixels
+        return a[0] <= b[2] + t && b[0] <= a[2] + t && a[1] <= b[3] + t && b[1] <= a[3] + t;
+    }
+
+    private static String tipoDePlaca(double ar, double fill, String cor) {
         return switch (cor) {
             case "vermelho" -> {
-                // Octógono (PARE): fill ≈ 0.83; Círculo (proibição): fill ≈ 0.79
-                if (ar > 0.8 && ar < 1.25 && fill > 0.75) yield "PARE";
-                if (ar > 0.8 && ar < 1.25)                yield "PROIBIÇÃO";
+                boolean quadrada = ar > 0.8 && ar < 1.25;
+                // Octógono PARE é sólido (preenchimento alto); círculos de
+                // proibição/regulamentação são anéis vazados (preenchimento baixo).
+                if (quadrada && fill > 0.55) yield "PARE";
+                if (quadrada)                yield "PROIBIÇÃO";
                 yield "REGULAMENTAÇÃO";
             }
             case "amarelo"  -> {
-                // Triângulo: fill ≈ 0.50; Losango: fill ≈ 0.50
-                if (ar > 0.8 && ar < 1.2 && fill < 0.60)  yield "ADVERTÊNCIA";
-                if (ar > 1.5)                              yield "ADVERTÊNCIA (FAIXA)";
+                if (ar > 0.8 && ar < 1.2 && fill < 0.60) yield "ADVERTÊNCIA";
+                if (ar > 1.5)                            yield "ADVERTÊNCIA (FAIXA)";
                 yield "ADVERTÊNCIA";
             }
             case "azul"     -> {
-                if (ar > 1.3) yield "INFORMATIVO (HORIZ.)";
+                if (ar > 1.3)  yield "INFORMATIVO (HORIZ.)";
                 if (ar < 0.75) yield "INFORMATIVO (VERT.)";
                 yield "INFORMATIVO";
             }
@@ -607,26 +666,19 @@ public class DesafioController {
     private static ResultadoDesafio processarBarras(BufferedImage img) {
         BufferedImage res = copiar(img);
         int w = img.getWidth(), h = img.getHeight();
+        int minArea = Math.max(150, (w * h) / 2000);
 
-        // Tenta com threshold alto (barras coloridas em fundo branco)
-        boolean[][] mask = maskEscuro(img, 200);
-        List<Componente> comps = encontrarComponentes(mask, w, h);
+        // Barras coloridas sobre fundo claro: a máscara por saturação mantém as
+        // barras (cores vivas, ex.: salmão) e descarta o fundo branco, as linhas
+        // de grade cinza-claro e os rótulos pretos dos eixos (saturação ~0).
+        // (maskEscuro falhava aqui: a cor das barras é clara e fragmentava.)
+        List<Componente> barras = filtrarBarras(
+                encontrarComponentes(maskColorida(img, 0.20f, 0.30f), w, h), minArea);
 
-        int minArea = Math.max(30, (w * h) / 2000);
-        List<Componente> barras = new ArrayList<>();
-        for (Componente c : comps)
-            if (c.area() >= minArea && c.altura() > c.largura() * 1.5)
-                barras.add(c);
-
-        // Se não achou, tenta com threshold mais baixo (barras escuras)
-        if (barras.size() < 2) {
-            mask = maskEscuro(img, 128);
-            comps = encontrarComponentes(mask, w, h);
-            barras.clear();
-            for (Componente c : comps)
-                if (c.area() >= minArea && c.altura() > c.largura() * 1.5)
-                    barras.add(c);
-        }
+        // Fallback: barras escuras/cinza (sem cor saturada) sobre fundo claro.
+        if (barras.isEmpty())
+            barras = filtrarBarras(
+                    encontrarComponentes(maskEscuro(img, 150), w, h), minArea);
 
         if (barras.isEmpty())
             return new ResultadoDesafio(res, "Nenhuma barra vertical detectada.");
@@ -641,7 +693,7 @@ public class DesafioController {
         // Anota resultado na imagem
         for (int i = 0; i < barras.size(); i++) {
             Componente c = barras.get(i);
-            Color cor = (c == maisAlta) ? Color.RED : (c == maisBaixa) ? Color.BLUE : Color.GREEN;
+            Color cor = (c == maisAlta) ? Color.RED : (c == maisBaixa) ? Color.BLUE : new Color(0, 160, 0);
             caixaColorida(res, c, cor, "B" + (i + 1));
             // Rótulo de altura abaixo da barra
             Graphics2D g = res.createGraphics();
@@ -665,5 +717,13 @@ public class DesafioController {
           .append(" — ").append(maisBaixa.altura()).append("px");
 
         return new ResultadoDesafio(res, sb.toString());
+    }
+
+    private static List<Componente> filtrarBarras(List<Componente> comps, int minArea) {
+        List<Componente> out = new ArrayList<>();
+        for (Componente c : comps)
+            if (c.area() >= minArea && c.altura() >= c.largura() * 0.8)
+                out.add(c);
+        return out;
     }
 }
