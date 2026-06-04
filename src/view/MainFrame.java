@@ -1,18 +1,29 @@
 package view;
 
+import controller.DesafioController;
 import controller.ImageController;
 import controller.ImageController.Operacao;
 import controller.ImageController.TipoElemento;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionListener;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 
 public class MainFrame extends JFrame {
 
     private final ImagePanel originalPanel;
     private ImagePanel transformedPanel;
     private final ImageController controller;
+
+    // --- Modo Desafio ---
+    private CardLayout cardLayout;
+    private JPanel mainCard;
+    private ImagePanel desafioImagePanel;
+    private JTextArea desafioTextArea;
 
     public MainFrame() {
         setTitle("Processamento Digital de Imagens");
@@ -36,11 +47,80 @@ public class MainFrame extends JFrame {
         );
         splitPane.setDividerLocation(600);
 
-        add(splitPane, BorderLayout.CENTER);
+        // Card: modo normal (antes/depois)
+        cardLayout = new CardLayout();
+        mainCard = new JPanel(cardLayout);
+        mainCard.add(splitPane, "NORMAL");
+
+        // Card: modo desafio (painel único)
+        mainCard.add(criarPainelDesafio(), "DESAFIO");
+
+        add(mainCard, BorderLayout.CENTER);
 
         setJMenuBar(createMenuBar());
-
         setVisible(true);
+    }
+
+    private JPanel criarPainelDesafio() {
+        JPanel painel = new JPanel(new BorderLayout(0, 4));
+
+        JButton btnVoltar = new JButton("← Voltar ao modo normal");
+        btnVoltar.addActionListener(e -> cardLayout.show(mainCard, "NORMAL"));
+        JPanel topo = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        topo.add(btnVoltar);
+
+        desafioImagePanel = new ImagePanel();
+
+        desafioTextArea = new JTextArea(7, 0);
+        desafioTextArea.setEditable(false);
+        desafioTextArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        desafioTextArea.setBackground(new Color(30, 30, 30));
+        desafioTextArea.setForeground(new Color(220, 220, 220));
+        JScrollPane scroll = new JScrollPane(desafioTextArea);
+        scroll.setPreferredSize(new Dimension(0, 160));
+
+        painel.add(topo, BorderLayout.NORTH);
+        painel.add(desafioImagePanel, BorderLayout.CENTER);
+        painel.add(scroll, BorderLayout.SOUTH);
+        return painel;
+    }
+
+    private void executarDesafio(DesafioController.TipoDesafio tipo) {
+        JFileChooser fc = new JFileChooser();
+        fc.setDialogTitle("Selecione uma imagem para o desafio");
+        if (fc.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+
+        BufferedImage img;
+        try {
+            img = ImageIO.read(fc.getSelectedFile());
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Erro ao abrir imagem.");
+            return;
+        }
+
+        cardLayout.show(mainCard, "DESAFIO");
+        desafioImagePanel.setImage(img);
+        desafioTextArea.setText("Processando...");
+        repaint();
+
+        // Processa em background para não travar a UI
+        SwingWorker<DesafioController.ResultadoDesafio, Void> worker = new SwingWorker<>() {
+            @Override
+            protected DesafioController.ResultadoDesafio doInBackground() {
+                return DesafioController.processar(img, tipo);
+            }
+            @Override
+            protected void done() {
+                try {
+                    DesafioController.ResultadoDesafio r = get();
+                    desafioImagePanel.setImage(r.imagem);
+                    desafioTextArea.setText(r.texto);
+                } catch (Exception ex) {
+                    desafioTextArea.setText("Erro ao processar: " + ex.getMessage());
+                }
+            }
+        };
+        worker.execute();
     }
 
     private JMenuItem createMenuItem(String title, String accelerator, ActionListener action) {
@@ -259,6 +339,52 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private void ativarFloodfill(boolean oito) {
+        String conectividade = oito ? "8 direções" : "4 direções";
+        JOptionPane.showMessageDialog(this,
+                "Modo Floodfill (" + conectividade + ") ativado.\nClique na imagem original para selecionar o pixel semente.",
+                "Floodfill", JOptionPane.INFORMATION_MESSAGE);
+
+        originalPanel.setClickListener((imgX, imgY) -> {
+            originalPanel.setClickListener(null);
+            java.awt.Color cor = JColorChooser.showDialog(this, "Escolha a cor de substituição", java.awt.Color.RED);
+            if (cor != null) {
+                transformedPanel.setImage(ImageController.floodfill(imgX, imgY, cor, oito));
+            }
+        });
+    }
+
+    private void showRotularRegioes() {
+        transformedPanel.setImage(ImageController.rotularRegioes());
+    }
+
+    private void showContarObjetos() {
+        ImageController.ResultadoAnalise resultado = ImageController.contarObjetos();
+        transformedPanel.setImage(resultado.imagem);
+        JOptionPane.showMessageDialog(this, resultado.relatorio, "Contagem de Objetos", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void showCalcularArea() {
+        ImageController.ResultadoAnalise resultado = ImageController.calcularArea();
+        transformedPanel.setImage(resultado.imagem);
+        mostrarRelatorio("Área por Região", resultado.relatorio);
+    }
+
+    private void showPerimetroCircularidade() {
+        ImageController.ResultadoAnalise resultado = ImageController.calcularPerimetroCircularidade();
+        transformedPanel.setImage(resultado.imagem);
+        mostrarRelatorio("Perímetro e Circularidade", resultado.relatorio);
+    }
+
+    private void mostrarRelatorio(String titulo, String texto) {
+        JTextArea area = new JTextArea(texto);
+        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        area.setEditable(false);
+        JScrollPane scroll = new JScrollPane(area);
+        scroll.setPreferredSize(new java.awt.Dimension(480, 320));
+        JOptionPane.showMessageDialog(this, scroll, titulo, JOptionPane.INFORMATION_MESSAGE);
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
@@ -288,13 +414,31 @@ public class MainFrame extends JFrame {
         menuMorfologia.add(createMenuItem("Afinamento", null, e -> showThinDialog()));
 
         JMenu menuExtracao = new JMenu("Extração de Características");
-        menuExtracao.add(new JMenuItem("Desafio"));
+        menuExtracao.add(createMenuItem("Floodfill 4-dir (clique na imagem)...", null, e -> ativarFloodfill(false)));
+        menuExtracao.add(createMenuItem("Floodfill 8-dir (clique na imagem)...", null, e -> ativarFloodfill(true)));
+        menuExtracao.add(createMenuItem("Rotular Regiões", null, e -> showRotularRegioes()));
+        menuExtracao.add(createMenuItem("Contar Objetos", null, e -> showContarObjetos()));
+        menuExtracao.add(createMenuItem("Área por Região", null, e -> showCalcularArea()));
+        menuExtracao.add(createMenuItem("Perímetro e Circularidade", null, e -> showPerimetroCircularidade()));
+
+        JMenu menuDesafio = new JMenu("Desafios");
+        menuDesafio.add(createMenuItem("a) Relógio Analógico → Horário Digital", null,
+                e -> executarDesafio(DesafioController.TipoDesafio.RELOGIO)));
+        menuDesafio.add(createMenuItem("b) Contar Objetos por Cor", null,
+                e -> executarDesafio(DesafioController.TipoDesafio.OBJETOS_COLORIDOS)));
+        menuDesafio.add(createMenuItem("c) Detectar Letras (A–Z)", null,
+                e -> executarDesafio(DesafioController.TipoDesafio.LETRAS)));
+        menuDesafio.add(createMenuItem("d) Identificar Placas de Trânsito", null,
+                e -> executarDesafio(DesafioController.TipoDesafio.PLACAS)));
+        menuDesafio.add(createMenuItem("e) Barras: Mais Alta e Mais Baixa", null,
+                e -> executarDesafio(DesafioController.TipoDesafio.BARRAS)));
 
         menuBar.add(menuArquivo);
         menuBar.add(menuGeo);
         menuBar.add(menuFiltros);
         menuBar.add(menuMorfologia);
         menuBar.add(menuExtracao);
+        menuBar.add(menuDesafio);
 
         return menuBar;
     }

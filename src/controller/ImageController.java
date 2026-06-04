@@ -8,6 +8,8 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.*;
+import java.util.List;
 
 public class ImageController {
 
@@ -876,5 +878,197 @@ public class ImageController {
         for (int y = 0; y < altura; y++)
             for (int x = 0; x < largura; x++)
                 if (remover[y][x]) grid[y][x] = 0;
+    }
+
+    // =========================================================
+    // EXERCÍCIOS FLOODFILL
+    // =========================================================
+
+    public static class ResultadoAnalise {
+        public final BufferedImage imagem;
+        public final String relatorio;
+
+        public ResultadoAnalise(BufferedImage imagem, String relatorio) {
+            this.imagem = imagem;
+            this.relatorio = relatorio;
+        }
+    }
+
+    private static BufferedImage copiarImagem(BufferedImage src) {
+        BufferedImage copia = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < src.getHeight(); y++)
+            for (int x = 0; x < src.getWidth(); x++)
+                copia.setRGB(x, y, src.getRGB(x, y));
+        return copia;
+    }
+
+    private static Color corParaRotulo(int rotulo) {
+        float hue = (rotulo * 0.618033988749895f) % 1.0f;
+        return Color.getHSBColor(hue, 0.85f, 0.9f);
+    }
+
+    // Exercício 1 — Floodfill básico
+    // Preenche a região conexa a partir do pixel semente usando BFS (fila).
+    // oito=true usa 8-conectividade, false usa 4-conectividade.
+    public static BufferedImage floodfill(int seedX, int seedY, Color corSubstituicao, boolean oito) {
+        BufferedImage result = copiarImagem(originalImage);
+        int targetRGB = result.getRGB(seedX, seedY);
+        int replacementRGB = corSubstituicao.getRGB();
+        if (targetRGB == replacementRGB) return result;
+
+        int largura = result.getWidth();
+        int altura = result.getHeight();
+
+        int[][] dirs4 = {{1,0},{-1,0},{0,1},{0,-1}};
+        int[][] dirs8 = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};
+        int[][] dirs = oito ? dirs8 : dirs4;
+
+        Queue<int[]> fila = new ArrayDeque<>();
+        fila.add(new int[]{seedX, seedY});
+        result.setRGB(seedX, seedY, replacementRGB);
+
+        while (!fila.isEmpty()) {
+            int[] p = fila.poll();
+            for (int[] d : dirs) {
+                int nx = p[0] + d[0], ny = p[1] + d[1];
+                if (nx >= 0 && nx < largura && ny >= 0 && ny < altura
+                        && result.getRGB(nx, ny) == targetRGB) {
+                    result.setRGB(nx, ny, replacementRGB);
+                    fila.add(new int[]{nx, ny});
+                }
+            }
+        }
+        return result;
+    }
+
+    // Encontra todas as regiões conexas (4-conectividade) na imagem binarizada.
+    private static Map<Integer, List<int[]>> encontrarRegioes() {
+        int largura = originalImage.getWidth();
+        int altura = originalImage.getHeight();
+        int[][] bin = binarizar(originalImage, 127);
+
+        // 0 = objeto não visitado, -1 = fundo
+        int[][] rotulos = new int[altura][largura];
+        for (int y = 0; y < altura; y++)
+            for (int x = 0; x < largura; x++)
+                if (bin[y][x] == 0) rotulos[y][x] = -1;
+
+        int[][] dirs = {{1,0},{-1,0},{0,1},{0,-1}};
+        Map<Integer, List<int[]>> regioes = new LinkedHashMap<>();
+        int rotulo = 1;
+
+        for (int y = 0; y < altura; y++) {
+            for (int x = 0; x < largura; x++) {
+                if (rotulos[y][x] != 0) continue;
+                List<int[]> pixels = new ArrayList<>();
+                Queue<int[]> fila = new ArrayDeque<>();
+                fila.add(new int[]{x, y});
+                rotulos[y][x] = rotulo;
+                while (!fila.isEmpty()) {
+                    int[] p = fila.poll();
+                    pixels.add(p);
+                    for (int[] d : dirs) {
+                        int nx = p[0]+d[0], ny = p[1]+d[1];
+                        if (nx>=0 && nx<largura && ny>=0 && ny<altura && rotulos[ny][nx]==0) {
+                            rotulos[ny][nx] = rotulo;
+                            fila.add(new int[]{nx, ny});
+                        }
+                    }
+                }
+                regioes.put(rotulo, pixels);
+                rotulo++;
+            }
+        }
+        return regioes;
+    }
+
+    private static BufferedImage construirImagemRotulada(Map<Integer, List<int[]>> regioes) {
+        int largura = originalImage.getWidth();
+        int altura = originalImage.getHeight();
+        BufferedImage img = new BufferedImage(largura, altura, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < altura; y++)
+            for (int x = 0; x < largura; x++)
+                img.setRGB(x, y, Color.BLACK.getRGB());
+        for (Map.Entry<Integer, List<int[]>> entry : regioes.entrySet()) {
+            int rgb = corParaRotulo(entry.getKey()).getRGB();
+            for (int[] p : entry.getValue())
+                img.setRGB(p[0], p[1], rgb);
+        }
+        return img;
+    }
+
+    // Exercício 2 — Rotulação de regiões conexas
+    public static BufferedImage rotularRegioes() {
+        Map<Integer, List<int[]>> regioes = encontrarRegioes();
+        return construirImagemRotulada(regioes);
+    }
+
+    // Exercício 3 — Contagem de objetos
+    public static ResultadoAnalise contarObjetos() {
+        Map<Integer, List<int[]>> regioes = encontrarRegioes();
+        BufferedImage img = construirImagemRotulada(regioes);
+        String relatorio = "Total de objetos encontrados: " + regioes.size();
+        return new ResultadoAnalise(img, relatorio);
+    }
+
+    // Exercício 4 — Cálculo de área por região
+    public static ResultadoAnalise calcularArea() {
+        Map<Integer, List<int[]>> regioes = encontrarRegioes();
+        BufferedImage img = construirImagemRotulada(regioes);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%-10s %10s%n", "Região", "Área (px)"));
+        sb.append("-".repeat(22)).append("\n");
+        for (Map.Entry<Integer, List<int[]>> entry : regioes.entrySet()) {
+            sb.append(String.format("%-10d %10d%n", entry.getKey(), entry.getValue().size()));
+        }
+        sb.append("\nTotal de regiões: ").append(regioes.size());
+
+        return new ResultadoAnalise(img, sb.toString());
+    }
+
+    // Exercício 5 — Perímetro e circularidade por região
+    // Perímetro: pixels da borda (com ao menos 1 vizinho-4 fora da região).
+    // Circularidade: C = (4π * A) / P²  → 1.0 para círculo perfeito.
+    public static ResultadoAnalise calcularPerimetroCircularidade() {
+        int largura = originalImage.getWidth();
+        int altura = originalImage.getHeight();
+        Map<Integer, List<int[]>> regioes = encontrarRegioes();
+        BufferedImage img = construirImagemRotulada(regioes);
+
+        // mapa pixel → rotulo para checar vizinhança
+        int[][] mapa = new int[altura][largura];
+        for (Map.Entry<Integer, List<int[]>> entry : regioes.entrySet())
+            for (int[] p : entry.getValue())
+                mapa[p[1]][p[0]] = entry.getKey();
+
+        int[][] dirs4 = {{1,0},{-1,0},{0,1},{0,-1}};
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%-8s %8s %10s %12s%n", "Região", "Área", "Perímetro", "Circularidade"));
+        sb.append("-".repeat(42)).append("\n");
+
+        for (Map.Entry<Integer, List<int[]>> entry : regioes.entrySet()) {
+            int rotulo = entry.getKey();
+            List<int[]> pixels = entry.getValue();
+            int area = pixels.size();
+
+            int perimetro = 0;
+            for (int[] p : pixels) {
+                for (int[] d : dirs4) {
+                    int nx = p[0]+d[0], ny = p[1]+d[1];
+                    if (nx < 0 || nx >= largura || ny < 0 || ny >= altura || mapa[ny][nx] != rotulo) {
+                        perimetro++;
+                        break;
+                    }
+                }
+            }
+
+            double circularidade = (perimetro == 0) ? 0 : (4.0 * Math.PI * area) / ((double) perimetro * perimetro);
+            sb.append(String.format("%-8d %8d %10d %12.4f%n", rotulo, area, perimetro, circularidade));
+        }
+        sb.append("\nCircularidade = 1.0 → círculo perfeito");
+
+        return new ResultadoAnalise(img, sb.toString());
     }
 }
