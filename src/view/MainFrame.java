@@ -427,74 +427,18 @@ public class MainFrame extends JFrame {
     }
 
     private void showOpeningDialog() {
-        transformedPanel.setImage(ImageController.processarErosaoDilatacao(Operacao.EROSAO, TipoElemento.CRUZ, 3));
-        setStatus("Abertura (erosão).");
+        transformedPanel.setImage(ImageController.abertura(TipoElemento.CRUZ, 3));
+        setStatus("Abertura (erosão + dilatação).");
     }
 
     private void showClosingDialog() {
-        transformedPanel.setImage(ImageController.processarErosaoDilatacao(Operacao.DILATACAO, TipoElemento.CRUZ, 3));
-        setStatus("Fechamento (dilatação).");
+        transformedPanel.setImage(ImageController.fechamento(TipoElemento.CRUZ, 3));
+        setStatus("Fechamento (dilatação + erosão).");
     }
 
     private void showThinDialog() {
         transformedPanel.setImage(ImageController.zhangSuen());
         setStatus("Afinamento Zhang-Suen aplicado.");
-    }
-
-    private void ativarFloodfill(boolean oito) {
-        String conectividade = oito ? "8 direções" : "4 direções";
-        JOptionPane.showMessageDialog(this,
-                "Modo Floodfill (" + conectividade + ") ativado.\nClique na imagem original para selecionar o pixel semente.",
-                "Floodfill", JOptionPane.INFORMATION_MESSAGE);
-        setStatus("Aguardando clique na imagem original...");
-
-        originalPanel.setClickListener((imgX, imgY) -> {
-            originalPanel.setClickListener(null);
-            java.awt.Color cor = JColorChooser.showDialog(this, "Escolha a cor de substituição", java.awt.Color.RED);
-            if (cor != null) {
-                transformedPanel.setImage(ImageController.floodfill(imgX, imgY, cor, oito));
-                setStatus("Floodfill aplicado.");
-            }
-        });
-    }
-
-    private void showRotularRegioes() {
-        transformedPanel.setImage(ImageController.rotularRegioes());
-        setStatus("Regiões rotuladas.");
-    }
-
-    private void showContarObjetos() {
-        ImageController.ResultadoAnalise resultado = ImageController.contarObjetos();
-        transformedPanel.setImage(resultado.imagem);
-        JOptionPane.showMessageDialog(this, resultado.relatorio, "Contagem de Objetos", JOptionPane.INFORMATION_MESSAGE);
-        setStatus("Contagem de objetos concluída.");
-    }
-
-    private void showCalcularArea() {
-        ImageController.ResultadoAnalise resultado = ImageController.calcularArea();
-        transformedPanel.setImage(resultado.imagem);
-        mostrarRelatorio("Área por Região", resultado.relatorio);
-        setStatus("Áreas calculadas.");
-    }
-
-    private void showPerimetroCircularidade() {
-        ImageController.ResultadoAnalise resultado = ImageController.calcularPerimetroCircularidade();
-        transformedPanel.setImage(resultado.imagem);
-        mostrarRelatorio("Perímetro e Circularidade", resultado.relatorio);
-        setStatus("Perímetro e circularidade calculados.");
-    }
-
-    private void mostrarRelatorio(String titulo, String texto) {
-        JTextArea area = new JTextArea(texto);
-        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
-        area.setBackground(C_DARK_BG);
-        area.setForeground(C_DARK_TEXT);
-        area.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
-        area.setEditable(false);
-        JScrollPane scroll = new JScrollPane(area);
-        scroll.setPreferredSize(new Dimension(500, 340));
-        scroll.setBorder(BorderFactory.createLineBorder(C_BORDER));
-        JOptionPane.showMessageDialog(this, scroll, titulo, JOptionPane.PLAIN_MESSAGE);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -550,21 +494,6 @@ public class MainFrame extends JFrame {
                 e -> showClosingDialog(),
                 e -> showThinDialog(),
         }));
-        menuBar.add(criarMenu("Características", new String[][]{
-                {"Floodfill 4-dir...", null, null},
-                {"Floodfill 8-dir...", null, null},
-                {"Rotular Regiões",    null, null},
-                {"Contar Objetos",     null, null},
-                {"Área por Região",    null, null},
-                {"Perímetro e Circ.",  null, null},
-        }, new ActionListener[]{
-                e -> ativarFloodfill(false),
-                e -> ativarFloodfill(true),
-                e -> showRotularRegioes(),
-                e -> showContarObjetos(),
-                e -> showCalcularArea(),
-                e -> showPerimetroCircularidade(),
-        }));
         menuBar.add(criarMenuDesafios());
 
         return menuBar;
@@ -585,13 +514,29 @@ public class MainFrame extends JFrame {
         JMenu menu = new JMenu(nome);
         estilizarMenu(menu);
         for (int i = 0; i < itens.length; i++) {
-            menu.add(createMenuItem(itens[i][0], itens[i][1], acoes[i]));
+            // Operações de Geometria/Filtros/Morfologia exigem uma imagem aberta.
+            menu.add(createMenuItem(itens[i][0], itens[i][1], exigeImagem(acoes[i])));
         }
         return menu;
     }
 
+    // Envolve uma ação para que só execute se houver imagem aberta;
+    // caso contrário, avisa o usuário.
+    private ActionListener exigeImagem(ActionListener acao) {
+        return e -> {
+            if (!ImageController.temImagem()) {
+                JOptionPane.showMessageDialog(this,
+                        "Abra uma imagem antes de aplicar uma operação.",
+                        "Nenhuma imagem aberta",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            acao.actionPerformed(e);
+        };
+    }
+
     private JMenu criarMenuDesafios() {
-        JMenu menu = new JMenu("Desafios ✦");
+        JMenu menu = new JMenu("Exercícios ✦");
         estilizarMenu(menu);
         menu.setForeground(C_PRIMARY);
         menu.add(createMenuItem("a) Relógio Analógico → Horário Digital", null,
