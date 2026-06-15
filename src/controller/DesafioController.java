@@ -259,7 +259,7 @@ public class DesafioController {
             if (p2 == -1 || suave[a] > suave[p2]) p2 = a;
         }
 
-        String horario, debug;
+        String horario;
         if (p2 >= 0 && suave[p1] > Rmin * 1.2) {
             double g1 = p1 * 360.0 / PASSOS, g2 = p2 * 360.0 / PASSOS;
             double len1 = suave[p1], len2 = suave[p2];
@@ -267,8 +267,6 @@ public class DesafioController {
             // Ponteiro mais comprido = minuteiro.
             double angMin = (len1 >= len2) ? g1 : g2;
             double angHor = (len1 >= len2) ? g2 : g1;
-            int lenMin = (int) Math.max(len1, len2);
-            int lenHor = (int) Math.min(len1, len2);
 
             int mins  = (int) Math.round(angMin / 6.0) % 60;
             // Hora corrigida pelo avanço do ponteiro das horas: no horário H:mm
@@ -279,53 +277,11 @@ public class DesafioController {
             if (horas == 0) horas = 12;
 
             horario = String.format("%02d:%02d", horas, mins);
-
-            desenharSeta(res, cx, cy, (int) Math.round(angMin), lenMin, new Color(30, 100, 255), "MIN");
-            desenharSeta(res, cx, cy, (int) Math.round(angHor), lenHor, new Color(220, 40, 40),  "HR");
-
-            Graphics2D g = res.createGraphics();
-            g.setColor(Color.GREEN);
-            g.fillOval(cx - 5, cy - 5, 10, 10);
-            g.dispose();
-
-            debug = String.format(
-                    "[debug] centro=(%d,%d)  raio=%d  Rmin=%d  Rmax=%d (60%%)%n" +
-                    "minuteiro=%.1f° (alcance %.0f)  horário=%.1f° (alcance %.0f)",
-                    cx, cy, raio, Rmin, (int) Rmax,
-                    angMin, Math.max(len1, len2), angHor, Math.min(len1, len2));
         } else {
             horario = "Ponteiros não detectados";
-            debug = String.format("[debug] centro=(%d,%d) raio=%d — sem dois picos válidos", cx, cy, raio);
         }
 
-        return new ResultadoDesafio(res,
-                "Horário detectado: " + horario + "\n\n" +
-                "Azul  = minuteiro  |  Vermelho = horário\n" +
-                "Verde = centro detectado\n\n" + debug);
-    }
-
-    /** Desenha uma linha colorida saindo do centro na direção do ângulo. */
-    private static void desenharSeta(BufferedImage img, int cx, int cy,
-                                     int ang, int comprimento, Color cor, String label) {
-        double dx = Math.sin(Math.toRadians(ang));
-        double dy = -Math.cos(Math.toRadians(ang));
-        int ex = cx + (int)(dx * comprimento);
-        int ey = cy + (int)(dy * comprimento);
-
-        Graphics2D g = img.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setColor(cor);
-        g.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.drawLine(cx, cy, ex, ey);
-        // Círculo na ponta
-        g.fillOval(ex - 5, ey - 5, 10, 10);
-        // Rótulo
-        g.setColor(Color.WHITE);
-        g.fillRect(ex - 2, ey - 16, label.length() * 7 + 4, 13);
-        g.setColor(cor);
-        g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
-        g.drawString(label, ex, ey - 4);
-        g.dispose();
+        return new ResultadoDesafio(res, "Horário detectado: " + horario);
     }
 
     // =========================================================

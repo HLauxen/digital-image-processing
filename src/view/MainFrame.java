@@ -176,6 +176,7 @@ public class MainFrame extends JFrame {
 
         desafioImagePanel = new ImagePanel();
         desafioImagePanel.setBackground(new Color(230, 230, 240));
+        desafioImagePanel.setFitToPanel(true);   // imagem inteira visível, sem corte
 
         desafioTextArea = new JTextArea(6, 0);
         desafioTextArea.setEditable(false);

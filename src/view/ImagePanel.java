@@ -15,6 +15,7 @@ public class ImagePanel extends JPanel {
     private BufferedImage image;
     private int offsetX = 0;
     private int offsetY = 0;
+    private boolean fitToPanel = false;
     private MouseAdapter currentMouseAdapter;
 
     public ImagePanel() {
@@ -33,6 +34,14 @@ public class ImagePanel extends JPanel {
 
     public void setImage(BufferedImage image) {
         this.image = image;
+        repaint();
+    }
+
+    /** Quando ativo, a imagem é redimensionada para caber inteira no painel
+     *  (mantendo a proporção, centralizada) em vez de desenhada em tamanho
+     *  real. Evita que imagens maiores que o painel apareçam cortadas. */
+    public void setFitToPanel(boolean fit) {
+        this.fitToPanel = fit;
         repaint();
     }
 
@@ -66,7 +75,27 @@ public class ImagePanel extends JPanel {
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
-        if (image != null) {
+        if (image == null) return;
+
+        if (fitToPanel) {
+            // "Contain": escala a imagem para caber inteira no painel mantendo a
+            // proporção e a centraliza — assim nada é cortado nas extremidades.
+            int pw = getWidth(), ph = getHeight();
+            int iw = image.getWidth(), ih = image.getHeight();
+            if (pw <= 0 || ph <= 0 || iw <= 0 || ih <= 0) return;
+
+            double escala = Math.min((double) pw / iw, (double) ph / ih);
+            int dw = (int) Math.round(iw * escala);
+            int dh = (int) Math.round(ih * escala);
+            int x = (pw - dw) / 2;
+            int y = (ph - dh) / 2;
+
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g2.drawImage(image, x, y, dw, dh, null);
+            g2.dispose();
+        } else {
             int x = (getWidth() - image.getWidth()) / 2 + offsetX;
             int y = (getHeight() - image.getHeight()) / 2 + offsetY;
             g.drawImage(image, x, y, null);
